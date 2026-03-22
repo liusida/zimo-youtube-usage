@@ -32,12 +32,5 @@ Enforces a daily traffic quota for **`br-zimo`** using **nftables** (`inet ytmon
 | `quota_block.sh` | `on` / `off` / `status` — insert or delete the nft rules that enforce blocking. |
 | `crontab.txt` | Example cron lines for the above schedule. |
 
-## Manual
-
-```bash
-./quota_block.sh on      # Block br-zimo (forward path)
-./quota_block.sh off     # Unblock
-./quota_block.sh status  # Show state
-```
 
 Edit **`youtube_quota.conf`** for quota size and server URL.
