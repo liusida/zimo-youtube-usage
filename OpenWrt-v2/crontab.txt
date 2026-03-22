@@ -1,0 +1,6 @@
+# Daily reset at midnight
+0 0 * * * /root/youtube/reset_quota.sh
+
+# Check quota and push usage every 3 minutes
+*/3 * * * * /root/youtube/check_quota.sh
+*/3 * * * * /root/youtube/push_quota.sh

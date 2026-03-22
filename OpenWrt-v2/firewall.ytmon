@@ -1,0 +1,62 @@
+#!/bin/sh
+# nftables setup for br-zimo: count traffic, block when quota scripts enable it.
+# Hook from /etc/config/firewall so this runs on firewall reload.
+
+INTERFACE="br-zimo"
+QUOTA_START_FILE="/root/youtube/quota_start.txt"
+
+has_table() { nft list table inet ytmon >/dev/null 2>&1; }
+has_chain() { nft list chain inet ytmon "$1" >/dev/null 2>&1; }
+has_rule()  { nft list chain inet ytmon "$1" 2>/dev/null | grep -q "comment \"$2\""; }
+
+# Table and chains
+has_table || nft add table inet ytmon
+has_chain block_quota || nft add chain inet ytmon block_quota
+has_chain forward    || nft add chain inet ytmon forward \
+    '{ type filter hook forward priority filter; policy accept; }'
+
+# block_quota: drop all when quota exceeded
+if ! has_rule block_quota block_quota_v4; then
+    nft add rule inet ytmon block_quota meta protocol ip drop comment "block_quota_v4"
+fi
+if ! has_rule block_quota block_quota_v6; then
+    nft add rule inet ytmon block_quota meta protocol ip6 drop comment "block_quota_v6"
+fi
+
+# Counters for br-zimo (inbound + outbound)
+FILTER_IN="iifname \"$INTERFACE\" "
+FILTER_OUT="oifname \"$INTERFACE\" "
+if ! has_rule forward LAN_total_zimo; then
+    nft add rule inet ytmon forward ${FILTER_IN}counter comment "LAN_total_zimo"
+fi
+if ! has_rule forward WAN_total_zimo; then
+    nft add rule inet ytmon forward ${FILTER_OUT}counter comment "WAN_total_zimo"
+fi
+
+# Default: blocking enabled (check_quota.sh will remove rules when under quota)
+if ! has_rule forward quota_block_enabled; then
+    nft insert rule inet ytmon forward ${FILTER_IN}jump block_quota comment "quota_block_enabled"
+fi
+if ! has_rule forward quota_block_udp; then
+    nft insert rule inet ytmon forward ${FILTER_IN}meta l4proto udp drop comment "quota_block_udp"
+fi
+
+# Counters reset (total < saved start): distinguish reload vs reboot.
+# /tmp is tmpfs and cleared on reboot. If we already ran this boot, counter reset = reload → set new baseline (give quota). If first run this boot = reboot → leave start unchanged so check_quota sees negative usage and blocks until reset_quota.sh.
+CURRENT_TOTAL=0
+for b in $(nft list chain inet ytmon forward 2>/dev/null | grep -E '(LAN_total_zimo|WAN_total_zimo)' | sed -n 's/.*bytes \([0-9]\+\).*/\1/p'); do
+    CURRENT_TOTAL=$((CURRENT_TOTAL + b))
+done
+OLD_START=0
+if [ -f "$QUOTA_START_FILE" ]; then
+    _v=$(cat "$QUOTA_START_FILE" 2>/dev/null | tr -d '\n' | grep -E '^[0-9]+$')
+    [ -n "$_v" ] && OLD_START="$_v"
+fi
+if [ "$CURRENT_TOTAL" -lt "$OLD_START" ]; then
+    if [ -f /tmp/ytmon_fw_seen ]; then
+        echo "$CURRENT_TOTAL" > "$QUOTA_START_FILE"
+    fi
+fi
+touch /tmp/ytmon_fw_seen
+
+exit 0

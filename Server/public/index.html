@@ -1,0 +1,672 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Zimo Usage</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #f5f5f5;
+            min-height: 100vh;
+            padding: 40px 20px;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            text-align: center;
+        }
+
+        .number {
+            font-size: 120px;
+            font-weight: 300;
+            color: #333;
+            line-height: 1;
+        }
+
+        .unit {
+            font-size: 48px;
+            color: #999;
+            font-weight: 300;
+            margin-left: 10px;
+        }
+
+        .label {
+            font-size: 18px;
+            color: #666;
+            margin-top: 20px;
+            margin-bottom: 40px;
+        }
+
+        .chart-container {
+            margin-top: 40px;
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            overflow: visible;
+        }
+
+        .chart-canvas-wrap {
+            position: relative;
+            overflow: visible;
+        }
+
+        .time-range-selector {
+            margin-bottom: 20px;
+        }
+
+        .time-range-selector button {
+            margin: 0 5px;
+            padding: 8px 16px;
+            cursor: pointer;
+            border: 1px solid #ddd;
+            background: white;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+
+        .time-range-selector button:hover {
+            background: #f5f5f5;
+        }
+
+        .time-range-selector button.active {
+            background: #333;
+            color: white;
+            border-color: #333;
+        }
+
+        #chartjs-tooltip {
+            position: absolute;
+            z-index: 20;
+            pointer-events: auto;
+            max-width: min(340px, calc(100% - 20px));
+            max-height: min(320px, 50vh);
+            overflow-x: hidden;
+            overflow-y: auto;
+            padding: 10px 12px;
+            background: rgba(255, 255, 255, 0.98);
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+            font-size: 12px;
+            line-height: 1.45;
+            color: #333;
+            text-align: left;
+        }
+
+        #chartjs-tooltip .tooltip-ip {
+            cursor: pointer;
+            color: #1565c0;
+            text-decoration: underline;
+            text-underline-offset: 2px;
+        }
+
+        #chartjs-tooltip .tooltip-ip:hover {
+            color: #0d47a1;
+        }
+
+        #chartjs-tooltip .copy-toast {
+            margin-top: 8px;
+            padding-top: 6px;
+            border-top: 1px solid #eee;
+            font-size: 11px;
+            color: #2e7d32;
+        }
+
+        #chartjs-tooltip .tooltip-lock-bar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 8px;
+            margin: -10px -12px 8px -12px;
+            padding: 8px 12px;
+            background: #eef2f6;
+            border-bottom: 1px solid #ddd;
+            font-size: 11px;
+            font-weight: 600;
+            color: #444;
+        }
+
+        #chartjs-tooltip .tooltip-close {
+            flex-shrink: 0;
+            width: 28px;
+            height: 28px;
+            margin: 0;
+            padding: 0;
+            border: none;
+            border-radius: 4px;
+            background: transparent;
+            color: #555;
+            font-size: 22px;
+            line-height: 1;
+            cursor: pointer;
+        }
+
+        #chartjs-tooltip .tooltip-close:hover {
+            background: #dde3ea;
+            color: #111;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="number" id="usage">-</div>
+        <div class="label" id="label">used today</div>
+        
+        <div class="chart-container">
+            <div class="time-range-selector">
+                <button onclick="updateChart('today')" id="btn-today" class="active">Today</button>
+                <button onclick="updateChart('3days')" id="btn-3days">Last 3 Days</button>
+            </div>
+            <div class="chart-canvas-wrap">
+                <canvas id="usageChart"></canvas>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let chart = null;
+        let currentRange = 'today';
+        let tooltipLocked = false;
+        let lastTooltipLayout = null;
+        const MAX_TOOLTIP_IPS = 8;
+        const MIN_TOOLTIP_BYTES = 1024;
+        /** Matches point highlight when Usage has a watch-listed IP in the snapshot. */
+        const USAGE_HIGHLIGHT_COLOR = 'rgb(255, 159, 64)';
+
+        function tooltipUsageLegendColor(item) {
+            if (item.datasetIndex !== 0) return item.dataset.borderColor || '#666';
+            const raw = item.raw;
+            if (raw && raw.has_watch_ip) return USAGE_HIGHLIGHT_COLOR;
+            const pt = item.chart && item.chart.data.datasets[0].data[item.dataIndex];
+            if (pt && pt.has_watch_ip) return USAGE_HIGHLIGHT_COLOR;
+            return item.dataset.borderColor || '#666';
+        }
+
+        function tooltipLockBarHtml() {
+            return '<div class="tooltip-lock-bar"><span>Pinned</span><button type="button" class="tooltip-close" aria-label="Close" title="Close">&times;</button></div>';
+        }
+
+        function unlockAndHideTooltip() {
+            tooltipLocked = false;
+            lastTooltipLayout = null;
+            const el = document.getElementById('chartjs-tooltip');
+            if (!el) return;
+            el.style.opacity = '0';
+            el.style.pointerEvents = 'none';
+            el.style.visibility = 'hidden';
+            el._contentKey = null;
+            el.innerHTML = '';
+        }
+
+        const TOOLTIP_CURSOR_GAP = 14;
+
+        function getCaretXYForDataIndex(chart, dataIndex) {
+            const meta = chart.getDatasetMeta(0);
+            const pt = meta.data && meta.data[dataIndex];
+            if (pt && typeof pt.x === 'number' && typeof pt.y === 'number') {
+                return { cx: pt.x, cy: pt.y };
+            }
+            const canvas = chart.canvas;
+            return { cx: canvas.offsetWidth / 2, cy: canvas.offsetHeight / 2 };
+        }
+
+        /** Place panel to the right of the chart cursor (caret); flip left if it would clip. Vertically centered on caret Y. */
+        function positionTooltipPanel(tooltipEl, chart, caretX, caretY) {
+            const canvas = chart.canvas;
+            const cw = canvas.offsetWidth;
+            const ch = canvas.offsetHeight;
+            const cx = caretX;
+            const cy = caretY;
+
+            tooltipEl.style.right = 'auto';
+            tooltipEl.style.bottom = 'auto';
+            tooltipEl.style.visibility = 'hidden';
+            tooltipEl.style.left = '0px';
+            tooltipEl.style.top = '0px';
+            tooltipEl.style.transform = 'none';
+            const tw = tooltipEl.offsetWidth;
+            const th = tooltipEl.offsetHeight;
+
+            let left = cx + TOOLTIP_CURSOR_GAP;
+            if (left + tw > cw - 6) {
+                left = cx - tw - TOOLTIP_CURSOR_GAP;
+            }
+            left = Math.max(6, Math.min(left, cw - tw - 6));
+
+            let top = cy;
+            const half = th / 2;
+            top = Math.max(6 + half, Math.min(top, ch - half - 6));
+
+            tooltipEl.style.left = `${left}px`;
+            tooltipEl.style.top = `${top}px`;
+            tooltipEl.style.transform = 'translateY(-50%)';
+            tooltipEl.style.visibility = 'visible';
+        }
+
+        function buildTooltipInnerForDataIndex(chart, dataIndex) {
+            const ds0 = chart.data.datasets[0];
+            const ds1 = chart.data.datasets[1];
+            const d0 = ds0.data[dataIndex];
+            if (!d0) return '';
+            let inner = '';
+            const t = new Date(d0.x);
+            inner += `<div style="font-weight:600;margin-bottom:6px">${escapeHtmlAttr(t.toLocaleString())}</div>`;
+            const usageDotColor = d0.has_watch_ip ? USAGE_HIGHLIGHT_COLOR : ds0.borderColor;
+            inner += `<div><span style="color:${usageDotColor}">●</span> ${escapeHtmlAttr(ds0.label)}: ${escapeHtmlAttr(String(d0.y))}</div>`;
+            const q = ds1.data[dataIndex];
+            if (q != null && q.y != null && Number.isFinite(Number(q.y))) {
+                inner += `<div><span style="color:${ds1.borderColor}">●</span> ${escapeHtmlAttr(ds1.label)}: ${escapeHtmlAttr(String(q.y))}</div>`;
+            }
+            inner += renderTooltipIpSectionHtml(getFilteredIpSnapshot(d0));
+            return inner;
+        }
+
+        function applyLockedTooltip(chart, dataIndex) {
+            const tooltipEl = getOrCreateChartTooltipEl(chart);
+            if (!tooltipEl) return;
+
+            let innerBody;
+            let caretX;
+            let caretY;
+            if (lastTooltipLayout && lastTooltipLayout.dataIndex === dataIndex) {
+                innerBody = lastTooltipLayout.innerBody;
+                caretX = lastTooltipLayout.caretX;
+                caretY = lastTooltipLayout.caretY;
+            } else {
+                innerBody = buildTooltipInnerForDataIndex(chart, dataIndex);
+                const xy = getCaretXYForDataIndex(chart, dataIndex);
+                caretX = xy.cx;
+                caretY = xy.cy;
+            }
+
+            tooltipLocked = true;
+            tooltipEl.innerHTML = tooltipLockBarHtml() + innerBody;
+            tooltipEl.style.visibility = 'visible';
+            tooltipEl.style.opacity = '1';
+            tooltipEl.style.pointerEvents = 'auto';
+            positionTooltipPanel(tooltipEl, chart, caretX, caretY);
+        }
+
+        function escapeHtmlAttr(s) {
+            return String(s)
+                .replace(/&/g, '&amp;')
+                .replace(/"/g, '&quot;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;');
+        }
+
+        function getFilteredIpSnapshot(point) {
+            const ipSnapshot = Array.isArray(point.ip_snapshot) ? point.ip_snapshot : [];
+            return ipSnapshot
+                .filter(row => Number(row.cumulative_bytes || 0) >= MIN_TOOLTIP_BYTES)
+                .sort((a, b) => Number(b.cumulative_bytes || 0) - Number(a.cumulative_bytes || 0));
+        }
+
+        async function copyToClipboard(text) {
+            try {
+                await navigator.clipboard.writeText(text);
+                return true;
+            } catch (e) {
+                try {
+                    const ta = document.createElement('textarea');
+                    ta.value = text;
+                    ta.style.position = 'fixed';
+                    ta.style.left = '-9999px';
+                    document.body.appendChild(ta);
+                    ta.focus();
+                    ta.select();
+                    const ok = document.execCommand('copy');
+                    document.body.removeChild(ta);
+                    return ok;
+                } catch (e2) {
+                    return false;
+                }
+            }
+        }
+
+        function showTooltipCopyToast(tooltipEl, message) {
+            let toast = tooltipEl.querySelector('.copy-toast');
+            if (!toast) {
+                toast = document.createElement('div');
+                toast.className = 'copy-toast';
+                tooltipEl.appendChild(toast);
+            }
+            toast.textContent = message;
+            clearTimeout(tooltipEl._copyToastTimer);
+            tooltipEl._copyToastTimer = setTimeout(() => {
+                toast.textContent = '';
+            }, 2000);
+        }
+
+        function getOrCreateChartTooltipEl(chart) {
+            const parent = chart && chart.canvas && chart.canvas.parentElement;
+            let el = document.getElementById('chartjs-tooltip');
+            if (!parent) return el;
+            if (!el) {
+                el = document.createElement('div');
+                el.id = 'chartjs-tooltip';
+                el.setAttribute('role', 'tooltip');
+                parent.appendChild(el);
+                el.addEventListener('click', (e) => {
+                    if (e.target.closest('.tooltip-close')) {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        unlockAndHideTooltip();
+                        return;
+                    }
+                    const span = e.target.closest('.tooltip-ip');
+                    if (!span) return;
+                    const ip = span.getAttribute('data-ip');
+                    if (!ip) return;
+                    e.preventDefault();
+                    e.stopPropagation();
+                    copyToClipboard(ip).then((ok) => {
+                        showTooltipCopyToast(el, ok ? `Copied ${ip}` : 'Copy failed');
+                    });
+                });
+                el.addEventListener('mouseleave', () => {
+                    if (tooltipLocked) return;
+                    el.style.opacity = '0';
+                    el.style.pointerEvents = 'none';
+                    el.style.visibility = 'hidden';
+                    el._contentKey = null;
+                });
+            } else if (el.parentElement !== parent) {
+                parent.appendChild(el);
+            }
+            return el;
+        }
+
+        function renderTooltipIpSectionHtml(filteredSnapshot) {
+            if (filteredSnapshot.length === 0) {
+                return '<div style="margin-top:8px;padding-top:6px;border-top:1px solid #eee">No IP snapshot &gt;= 1 KB</div>';
+            }
+            let html = '<div style="margin-top:8px;padding-top:6px;border-top:1px solid #eee;font-weight:600;margin-bottom:4px">IP cumulative (10s capture):</div>';
+            filteredSnapshot.slice(0, MAX_TOOLTIP_IPS).forEach(row => {
+                const ip = row.ip;
+                const ipAttr = escapeHtmlAttr(ip);
+                const ipLabel = escapeHtmlAttr(ip);
+                const bytes = formatBytes(row.cumulative_bytes || 0);
+                html += `<div><span class="tooltip-ip" data-ip="${ipAttr}" title="Click to copy">${ipLabel}</span>: ${bytes}</div>`;
+            });
+            if (filteredSnapshot.length > MAX_TOOLTIP_IPS) {
+                html += `<div style="opacity:0.75;margin-top:4px">...and ${filteredSnapshot.length - MAX_TOOLTIP_IPS} more</div>`;
+            }
+            return html;
+        }
+
+        function externalTooltipHandler(context) {
+            const { chart, tooltip } = context;
+            const tooltipEl = getOrCreateChartTooltipEl(chart);
+            if (!tooltipEl) return;
+
+            if (tooltipLocked) {
+                return;
+            }
+
+            if (tooltip.opacity === 0) {
+                if (!tooltipEl.matches(':hover')) {
+                    tooltipEl.style.opacity = '0';
+                    tooltipEl.style.pointerEvents = 'none';
+                    tooltipEl.style.visibility = 'hidden';
+                    tooltipEl._contentKey = null;
+                }
+                return;
+            }
+
+            const items = tooltip.dataPoints || [];
+            if (items.length === 0) {
+                tooltipEl.style.opacity = '0';
+                tooltipEl.style.pointerEvents = 'none';
+                tooltipEl.style.visibility = 'hidden';
+                return;
+            }
+
+            const raw = items[0].raw || {};
+            const filtered = getFilteredIpSnapshot(raw);
+
+            let inner = '';
+            const titles = tooltip.title && tooltip.title.length ? tooltip.title : [];
+            if (titles.length) {
+                inner += `<div style="font-weight:600;margin-bottom:6px">${titles.map(escapeHtmlAttr).join('<br>')}</div>`;
+            } else if (items[0].parsed && items[0].parsed.x != null) {
+                const t = new Date(items[0].parsed.x);
+                inner += `<div style="font-weight:600;margin-bottom:6px">${escapeHtmlAttr(t.toLocaleString())}</div>`;
+            }
+            items.forEach((item) => {
+                const color = tooltipUsageLegendColor(item);
+                const label = item.dataset.label || '';
+                inner += `<div><span style="color:${color}">●</span> ${escapeHtmlAttr(label)}: ${escapeHtmlAttr(String(item.formattedValue))}</div>`;
+            });
+            inner += renderTooltipIpSectionHtml(filtered);
+
+            const dp0 = items[0];
+            const snapSig = filtered.slice(0, MAX_TOOLTIP_IPS).map(r => `${r.ip}:${r.cumulative_bytes}`).join(';');
+            const contentKey = `${dp0.datasetIndex},${dp0.dataIndex},${dp0.parsed.x}|${snapSig}`;
+            if (tooltipEl._contentKey !== contentKey) {
+                tooltipEl._contentKey = contentKey;
+                tooltipEl.innerHTML = inner;
+            }
+
+            tooltipEl.style.visibility = 'visible';
+            tooltipEl.style.opacity = '1';
+            tooltipEl.style.pointerEvents = 'auto';
+            positionTooltipPanel(tooltipEl, chart, tooltip.caretX, tooltip.caretY);
+
+            lastTooltipLayout = {
+                dataIndex: dp0.dataIndex,
+                innerBody: inner,
+                contentKey,
+                caretX: tooltip.caretX,
+                caretY: tooltip.caretY
+            };
+        }
+
+        // Initialize chart
+        const ctx = document.getElementById('usageChart').getContext('2d');
+        chart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                datasets: [{
+                    label: 'Usage (MB)',
+                    data: [],
+                    borderColor: 'rgb(75, 192, 192)',
+                    backgroundColor: 'rgba(75, 192, 192, 0.2)',
+                    pointBackgroundColor: [],
+                    pointBorderColor: [],
+                    pointHitRadius: 12,
+                    tension: 0.1,
+                    fill: true
+                }, {
+                    label: 'Quota (MB)',
+                    data: [],
+                    borderColor: 'rgb(255, 99, 132)',
+                    borderDash: [5, 5],
+                    fill: false,
+                    pointRadius: 0
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: true,
+                interaction: {
+                    mode: 'index',
+                    intersect: false
+                },
+                onHover(event, elements, c) {
+                    const target = (event && event.native && event.native.target) || (c && c.canvas);
+                    if (target) target.style.cursor = elements && elements.length ? 'pointer' : 'default';
+                },
+                onClick(event, elements, c) {
+                    if (tooltipLocked) return;
+                    if (!elements || elements.length === 0) return;
+                    applyLockedTooltip(c, elements[0].index);
+                },
+                scales: {
+                    x: {
+                        type: 'time',
+                        time: {
+                            displayFormats: {
+                                hour: 'HH:mm',
+                                day: 'MMM dd'
+                            }
+                        },
+                        title: {
+                            display: true,
+                            text: 'Time'
+                        }
+                    },
+                    y: {
+                        beginAtZero: true,
+                        title: {
+                            display: true,
+                            text: 'Usage (MB)'
+                        }
+                    }
+                },
+                plugins: {
+                    legend: {
+                        display: true,
+                        position: 'top'
+                    },
+                    tooltip: {
+                        enabled: false,
+                        external: externalTooltipHandler,
+                        mode: 'index',
+                        intersect: false
+                    }
+                }
+            }
+        });
+
+        function formatBytes(bytes) {
+            const num = Number(bytes) || 0;
+            if (num >= 1024 * 1024 * 1024) return `${(num / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+            if (num >= 1024 * 1024) return `${(num / (1024 * 1024)).toFixed(2)} MB`;
+            if (num >= 1024) return `${(num / 1024).toFixed(2)} KB`;
+            return `${num} B`;
+        }
+
+        function getTimeRange(range) {
+            const now = new Date();
+            const start = new Date();
+            
+            switch(range) {
+                case 'today':
+                    start.setHours(0, 0, 0, 0);
+                    break;
+                case '3days':
+                    start.setDate(start.getDate() - 3);
+                    break;
+            }
+            
+            return {
+                start: start.toISOString(),
+                end: now.toISOString()
+            };
+        }
+
+        function updateChart(range) {
+            currentRange = range;
+            
+            // Update button states
+            document.querySelectorAll('.time-range-selector button').forEach(btn => {
+                btn.classList.remove('active');
+            });
+            document.getElementById(`btn-${range}`).classList.add('active');
+            
+            const { start, end } = getTimeRange(range);
+            // ~1 point/min: today = 1440, 3 days = 4320
+            const limit = range === 'today' ? 1500 : 4500;
+            fetch(`/zimo-usage/history?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}&iface=br-zimo&limit=${limit}`)
+                .then(res => res.json())
+                .then(result => {
+                    const data = result.data || [];
+                    
+                    if (data.length === 0) {
+                        chart.data.datasets[0].data = [];
+                        chart.data.datasets[0].pointBackgroundColor = [];
+                        chart.data.datasets[0].pointBorderColor = [];
+                        chart.data.datasets[1].data = [];
+                        chart.update();
+                        return;
+                    }
+                    
+                    // Usage data
+                    chart.data.datasets[0].data = data.map(d => ({
+                        x: d.timestamp,
+                        y: d.used_mb,
+                        has_watch_ip: !!d.has_watch_ip,
+                        ip_snapshot: Array.isArray(d.ip_snapshot) ? d.ip_snapshot : []
+                    }));
+                    chart.data.datasets[0].pointBackgroundColor = data.map(d =>
+                        d.has_watch_ip ? 'rgb(255, 159, 64)' : 'rgb(75, 192, 192)'
+                    );
+                    chart.data.datasets[0].pointBorderColor = data.map(d =>
+                        d.has_watch_ip ? 'rgb(255, 159, 64)' : 'rgb(75, 192, 192)'
+                    );
+                    
+                    // Quota line if available
+                    if (data[0].quota_mb) {
+                        chart.data.datasets[1].data = data.map(d => ({
+                            x: d.timestamp,
+                            y: d.quota_mb
+                        }));
+                    } else {
+                        chart.data.datasets[1].data = [];
+                    }
+                    
+                    chart.update();
+                })
+                .catch(err => {
+                    console.error('Chart update error:', err);
+                });
+        }
+
+        function updateUsage() {
+            fetch('/zimo-usage')
+                .then(res => res.json())
+                .then(data => {
+                    if (data.error) {
+                        document.getElementById('usage').textContent = '?';
+                        return;
+                    }
+                    const usedMB = parseFloat(data.used_mb || (data.used_kb / 1024)).toFixed(2);
+                    document.getElementById('usage').innerHTML = 
+                        usedMB + '<span class="unit">MB</span>';
+                    
+                    const quotaMB = data.quota_mb;
+                    const labelText = quotaMB 
+                        ? `used today (${quotaMB}MB quota)`
+                        : 'used today';
+                    document.getElementById('label').textContent = labelText;
+                })
+                .catch(err => {
+                    document.getElementById('usage').textContent = '?';
+                });
+        }
+
+        // Initial load
+        updateUsage();
+        updateChart('today');
+        
+        // Auto-refresh every 30 seconds
+        setInterval(() => {
+            updateUsage();
+            updateChart(currentRange);
+        }, 30000);
+    </script>
+</body>
+</html>
+

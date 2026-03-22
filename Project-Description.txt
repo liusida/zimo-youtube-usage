@@ -1,0 +1,12 @@
+OpenWrt:
+
+1. set a hook in `/etc/config/firewall` to call `firewall.ytmon` when firewall reload.
+2. `firewall.ytmon` set up the counting mechanism and `quota_start.txt` for starting point.
+3. run `check_quota.sh` every 3 min to check usage, if it exceeds the quota defined in `youtube_quota.conf`, call `quota_block.sh` to block the interface.
+4. run `push_quota.sh` every 3 min to upload info to server
+5. run `reset_quota.sh` every midnight.
+
+Server:
+
+1. receive info in `server.js` endpoints: post('/zimo-usage'), save them to sqlite `data/usage.db`.
+2. show info in `server.js` endpoints: get('/zimo-usage').

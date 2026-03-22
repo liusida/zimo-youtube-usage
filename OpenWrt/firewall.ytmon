@@ -1,0 +1,123 @@
+#!/bin/sh
+
+# ---------- Configuration ----------
+# Set interface to filter measurements (e.g., "zimo" or "br-zimo")
+# Leave empty to measure all traffic
+INTERFACE="br-zimo"
+
+# ---------- helpers ----------
+
+has_table() {
+    nft list table inet ytmon >/dev/null 2>&1
+}
+
+has_chain() {
+    nft list chain inet ytmon "$1" >/dev/null 2>&1
+}
+
+has_set() {
+    nft list set inet ytmon "$1" >/dev/null 2>&1
+}
+
+has_rule_comment() {
+    nft list chain inet ytmon "$1" 2>/dev/null | grep -q "comment \"$2\""
+}
+
+# ---------- table ----------
+
+if ! has_table; then
+    nft add table inet ytmon
+fi
+
+# ---------- sets ----------
+
+if ! has_set youtube_v4; then
+    nft add set inet ytmon youtube_v4 \
+        '{ type ipv4_addr; flags timeout; timeout 1h; }'
+fi
+
+if ! has_set youtube_v6; then
+    nft add set inet ytmon youtube_v6 \
+        '{ type ipv6_addr; flags timeout; timeout 1h; }'
+fi
+
+# ---------- block chain ----------
+
+if ! has_chain block_quota; then
+    nft add chain inet ytmon block_quota
+fi
+
+# block rules (idempotent by comment)
+# Block all IPv4 traffic when quota is exceeded
+has_rule_comment block_quota block_quota_v4 || \
+nft add rule inet ytmon block_quota \
+    meta protocol ip drop \
+    comment "block_quota_v4"
+
+# Block all IPv6 traffic when quota is exceeded
+has_rule_comment block_quota block_quota_v6 || \
+nft add rule inet ytmon block_quota \
+    meta protocol ip6 drop \
+    comment "block_quota_v6"
+
+# ---------- forward chain ----------
+
+if ! has_chain forward; then
+    nft add chain inet ytmon forward \
+        '{ type filter hook forward priority filter; policy accept; }'
+fi
+
+# Build filter condition for interface
+FILTER_IN=""
+FILTER_OUT=""
+
+if [ -n "$INTERFACE" ]; then
+    FILTER_IN="iifname \"$INTERFACE\" "
+    FILTER_OUT="oifname \"$INTERFACE\" "
+fi
+
+# counters (idempotent by comment)
+# LAN_total_zimo: measure ALL traffic FROM br-zimo (outbound)
+has_rule_comment forward LAN_total_zimo || \
+nft add rule inet ytmon forward \
+    ${FILTER_IN}counter \
+    comment "LAN_total_zimo"
+
+# WAN_total_zimo: measure ALL traffic TO br-zimo (inbound)
+has_rule_comment forward WAN_total_zimo || \
+nft add rule inet ytmon forward \
+    ${FILTER_OUT}counter \
+    comment "WAN_total_zimo"
+
+# ---------- default: BLOCK ENABLED ----------
+
+if ! has_rule_comment forward quota_block_enabled; then
+    nft insert rule inet ytmon forward \
+        ${FILTER_IN}jump block_quota \
+        comment "quota_block_enabled"
+fi
+
+if ! has_rule_comment forward quota_block_udp; then
+    nft insert rule inet ytmon forward \
+        ${FILTER_IN}meta l4proto udp drop \
+        comment "quota_block_udp"
+fi
+
+# Only set sentinel when counters actually reset (current total < saved start).
+# Avoids overwriting quota_start on WAN-triggered firewall reload (e.g. DHCP renew).
+QUOTA_START_FILE="/root/youtube/quota_start.txt"
+CURRENT_TOTAL=0
+for bytes in $(nft list chain inet ytmon forward 2>/dev/null | \
+    grep -E '(LAN_total_zimo|WAN_total_zimo)' | \
+    sed -n 's/.*bytes \([0-9]\+\).*/\1/p'); do
+    CURRENT_TOTAL=$((CURRENT_TOTAL + bytes))
+done
+OLD_START=0
+if [ -f "$QUOTA_START_FILE" ]; then
+    OLD_START=$(cat "$QUOTA_START_FILE" 2>/dev/null | tr -d '\n' | grep -E '^[0-9]+$' || echo 0)
+fi
+if [ "$CURRENT_TOTAL" -lt "$OLD_START" ]; then
+    echo "999999999999" > "$QUOTA_START_FILE"
+fi
+
+exit 0
