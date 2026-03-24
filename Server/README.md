@@ -46,3 +46,5 @@ The `data/` directory is created on startup if missing.
 Optional: for `scp`-based deploy, copy [`upload.sh.example`](upload.sh.example) to `upload.sh`, set `USER@YOUR_HOST` (paths already use `~/zimo-usage/`), and run it. `upload.sh` is gitignored so deploy targets stay local.
 
 **GitHub Actions:** pushes to `main` that touch `Server/` rsync to **`~/zimo-usage/`** on the host configured in [`.github/workflows/deploy-server.yml`](../.github/workflows/deploy-server.yml). Required secrets: `SSH_HOST`, `SSH_USER`, `SSH_KEY`. The workflow runs `ssh-keyscan` to fill `known_hosts` (no `SSH_KNOWN_HOSTS` secret). Optional: `SSH_PORT`, `DEPLOY_POST_CMD` (e.g. `systemctl --user restart zimo-usage.service`). Remove the `DEPLOY_PATH` secret if you added it earlier; it is no longer used.
+
+For **`SSH_KEY`**, paste the **entire** private key file into the secret (from `-----BEGIN` through `-----END`), with normal line breaks—do not paste a single line with the text `\n`, and do not wrap the value in quotes. The workflow uses `webfactory/ssh-agent` to load the key (avoids `libcrypto` errors from writing the key to disk incorrectly).
