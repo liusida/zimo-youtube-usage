@@ -677,7 +677,7 @@
                         chart.data.datasets[0].pointBackgroundColor = [];
                         chart.data.datasets[0].pointBorderColor = [];
                         chart.data.datasets[1].data = [];
-                        chart.update();
+                        chart.update('none');
                         return;
                     }
                     
@@ -704,8 +704,10 @@
                     } else {
                         chart.data.datasets[1].data = [];
                     }
-                    
-                    chart.update();
+
+                    // Skip animation: replacing the full series after a day change would tween old
+                    // vertex positions to new ones (x scale jumps), which looks like lines "flying".
+                    chart.update('none');
                 })
                 .catch(err => {
                     console.error('Chart update error:', err);
