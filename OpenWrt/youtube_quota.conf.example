@@ -2,7 +2,7 @@
 #
 # Global configuration for YouTube quota control
 #
-# Copy this file to your OpenWrt router and adjust values as needed.
+# Copy this file to youtube_quota.conf on your OpenWrt router and adjust values.
 
 # Daily quota threshold in MB (configure in MB for readability, scripts use QUOTA_BYTES internally)
 QUOTA_MB=1000
@@ -11,5 +11,5 @@ QUOTA_BYTES=$((QUOTA_MB * 1024 * 1024))
 # File to store the daily start/baseline value
 START_FILE="quota_start.txt"
 
-# Server URL for pushing usage data
-USAGE_SERVER_URL="http://dict.liusida.com:8080/zimo-usage"
+# Server URL for pushing usage data (required for push_quota.sh)
+USAGE_SERVER_URL="http://YOUR_SERVER:8080/zimo-usage"

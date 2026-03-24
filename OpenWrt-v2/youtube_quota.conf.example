@@ -5,5 +5,5 @@ QUOTA_BYTES=$((QUOTA_MB * 1024 * 1024))
 # Baseline file (relative = under script dir)
 START_FILE="quota_start.txt"
 
-# Where to POST usage
-USAGE_SERVER_URL="http://dict.liusida.com:8080/zimo-usage"
+# Where to POST usage (required for push_quota.sh)
+USAGE_SERVER_URL="http://YOUR_SERVER:8080/zimo-usage"

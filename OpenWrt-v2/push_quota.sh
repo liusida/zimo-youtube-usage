@@ -9,7 +9,11 @@ get_effective_usage
 USAGE_KB=$((USAGE / 1024))
 USAGE_MB=$((USAGE / 1024 / 1024))
 QUOTA_MB="${QUOTA_MB:-$((QUOTA_BYTES / 1024 / 1024))}"
-SERVER_URL="${USAGE_SERVER_URL:-http://dict.liusida.com:8080/zimo-usage}"
+if [ -z "$USAGE_SERVER_URL" ]; then
+    logger -t youtube_quota "USAGE_SERVER_URL is not set in youtube_quota.conf"
+    exit 1
+fi
+SERVER_URL="$USAGE_SERVER_URL"
 LISTENER_SCRIPT="$SCRIPT_DIR/listen_on_network.sh"
 
 IP_SNAPSHOT="[]"

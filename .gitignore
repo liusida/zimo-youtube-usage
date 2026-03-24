@@ -17,6 +17,13 @@ Server/data/*
 # OpenWrt: per-device baseline (written on router)
 **/quota_start.txt
 
+# Local router config (copy from youtube_quota.conf.example)
+OpenWrt/youtube_quota.conf
+OpenWrt-v2/youtube_quota.conf
+
+# Local deploy script (copy from upload.sh.example)
+Server/upload.sh
+
 # OS
 .DS_Store
 Thumbs.db

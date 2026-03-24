@@ -42,3 +42,5 @@ The `data/` directory is created on startup if missing.
 ## Deploy / process manager
 
 Copy `server.js`, `package.json`, `package-lock.json`, and `public/` to the host, run `npm install --omit=dev` if you only need production deps, then keep the process alive with **systemd**, **pm2**, or similar.
+
+Optional: for `scp`-based deploy, copy [`upload.sh.example`](upload.sh.example) to `upload.sh`, set your `USER@HOST:path`, and run it. `upload.sh` is gitignored so deploy targets stay local.

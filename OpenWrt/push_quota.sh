@@ -55,8 +55,12 @@ USAGE_MB=$((USAGE / 1024 / 1024))
 QUOTA_MB="${QUOTA_MB:-20}"
 QUOTA_KB=$((QUOTA_MB * 1024))
 
-# Server URL (update this to your server)
-SERVER_URL="${USAGE_SERVER_URL:-http://dict.liusida.com:8080/zimo-usage}"
+# Server URL (required in youtube_quota.conf)
+if [ -z "$USAGE_SERVER_URL" ]; then
+    logger -t youtube_quota "USAGE_SERVER_URL is not set in youtube_quota.conf"
+    exit 1
+fi
+SERVER_URL="$USAGE_SERVER_URL"
 
 # Send usage data (requires curl package: opkg install curl)
 curl -s -X POST "$SERVER_URL" \

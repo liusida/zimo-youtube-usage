@@ -7,22 +7,23 @@ Enforces a daily traffic quota for **`br-zimo`** using **nftables** (`inet ytmon
 ## Setup
 
 1. Copy this folder on the router (e.g. `/root/youtube/`).
-2. In `/etc/config/firewall` add:
+2. **Config:** `cp youtube_quota.conf.example youtube_quota.conf` and edit `USAGE_SERVER_URL` (required for `push_quota.sh`) and `QUOTA_MB`. The real `youtube_quota.conf` is not committed to git.
+3. In `/etc/config/firewall` add:
    ```
    config include
            option type 'script'
            option path '/root/youtube/firewall.ytmon'
            option fw4_compatible '1'
    ```
-3. Reload firewall: `/etc/init.d/firewall reload`
-4. Install cron entries from `crontab.txt` (daily reset at 00:00; `check_quota.sh` and `push_quota.sh` every 3 minutes).
-5. Ensure **`curl`** is installed (`opkg install curl`). For per-IP snapshots on push, install **`iftop`** and keep `listen_on_network.sh` executable (optional; push still works with an empty `ip_snapshot`).
+4. Reload firewall: `/etc/init.d/firewall reload`
+5. Install cron entries from `crontab.txt` (daily reset at 00:00; `check_quota.sh` and `push_quota.sh` every 3 minutes).
+6. Ensure **`curl`** is installed (`opkg install curl`). For per-IP snapshots on push, install **`iftop`** and keep `listen_on_network.sh` executable (optional; push still works with an empty `ip_snapshot`).
 
 ## Scripts and config
 
 | File | Role |
 |------|------|
-| `youtube_quota.conf` | `QUOTA_MB`, `QUOTA_BYTES` (derived from MB if set), `START_FILE`, `USAGE_SERVER_URL`. |
+| `youtube_quota.conf` | `QUOTA_MB`, `QUOTA_BYTES` (derived from MB if set), `START_FILE`, `USAGE_SERVER_URL`. Create from `youtube_quota.conf.example` (see setup step 2). |
 | `quota_common.sh` | Shared config, `get_total_bytes`, `get_effective_usage` (carry / reboot logic). |
 | `firewall.ytmon` | Creates table/chains, counters, default jump to `block_quota` until `check_quota.sh` clears it; handles counter-vs-baseline edge cases on reload vs reboot. |
 | `check_quota.sh` | If usage exceeds quota → `quota_block.sh on`. If under quota and no `reset_detected.flag` → `quota_block.sh off`. |
@@ -32,5 +33,4 @@ Enforces a daily traffic quota for **`br-zimo`** using **nftables** (`inet ytmon
 | `quota_block.sh` | `on` / `off` / `status` — insert or delete the nft rules that enforce blocking. |
 | `crontab.txt` | Example cron lines for the above schedule. |
 
-
-Edit **`youtube_quota.conf`** for quota size and server URL.
+Edit **`youtube_quota.conf`** for quota size and server URL (copy from `youtube_quota.conf.example` if you do not have one yet).

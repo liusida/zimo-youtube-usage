@@ -12,7 +12,7 @@ Daily traffic quota on OpenWrt (nftables) for a dedicated bridge, with a small N
 
 ## Flow
 
-1. Router scripts measure usage against `youtube_quota.conf` (`QUOTA_MB`, `USAGE_SERVER_URL`, etc.).
+1. Router scripts measure usage against `youtube_quota.conf` (`QUOTA_MB`, `USAGE_SERVER_URL`, etc.). That file is created locally from `youtube_quota.conf.example` in **`OpenWrt-v2/`** and is not committed (see [**OpenWrt-v2/README.md**](OpenWrt-v2/README.md)).
 2. `push_quota.sh` POSTs JSON to the server’s `/zimo-usage`.
 3. The server stores data and the web UI reads it via the HTTP API.
 

@@ -1,0 +1,4 @@
+# Upload code only (exclude data/ so remote keeps its own DB and logs)
+# Copy to upload.sh and set USER@YOUR_HOST to your deploy target.
+scp server.js package.json package-lock.json README.md upload.sh USER@YOUR_HOST:~/zimo-usage/
+scp -r public USER@YOUR_HOST:~/zimo-usage/
