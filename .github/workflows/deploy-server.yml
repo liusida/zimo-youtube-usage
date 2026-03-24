@@ -75,6 +75,40 @@ jobs:
             -e "$RSYNC_RSH" \
             "Server/" "${SSH_USER}@${SSH_HOST}:~/zimo-usage/"
 
+      # Shows which node/npm SSH sees — often differs from an interactive login (nvm / PATH).
+      - name: Remote node/npm (PATH diagnostic)
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+          SSH_PORT: ${{ secrets.SSH_PORT }}
+          DEPLOY_NPM_BIN: ${{ vars.DEPLOY_NPM_BIN }}
+        run: |
+          set -euo pipefail
+          PORT="${SSH_PORT:-22}"
+          SSH_BASE=(ssh -p "${PORT}" \
+            -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
+            "${SSH_USER}@${SSH_HOST}")
+
+          echo "::group::Default SSH remote command (non-login PATH)"
+          "${SSH_BASE[@]}" 'echo "node: $(command -v node 2>/dev/null || echo none)"; echo "npm: $(command -v npm 2>/dev/null || echo none)"; node -v 2>/dev/null || true; npm -v 2>/dev/null || true'
+          echo "::endgroup::"
+
+          echo "::group::bash -lc (same as fallback npm ci when DEPLOY_NPM_BIN unset)"
+          REMOTE_PATH_CHECK='echo "node: $(command -v node)"; echo "npm: $(command -v npm)"; node -v; npm -v'
+          "${SSH_BASE[@]}" "bash -lc $(printf '%q' "$REMOTE_PATH_CHECK")"
+          echo "::endgroup::"
+
+          if [ -n "${DEPLOY_NPM_BIN:-}" ]; then
+            echo "::group::DEPLOY_NPM_BIN (pinned for npm ci)"
+            Q_NPM=$(printf '%q' "$DEPLOY_NPM_BIN")
+            Q_NODE=$(printf '%q' "${DEPLOY_NPM_BIN%/npm}node")
+            echo "Variable: $DEPLOY_NPM_BIN"
+            "${SSH_BASE[@]}" "${Q_NPM} -v && ${Q_NODE} -v"
+            echo "::endgroup::"
+          else
+            echo "DEPLOY_NPM_BIN not set — npm ci uses bash -lc npm above."
+          fi
+
       - name: Install dependencies and optional post-deploy
         env:
           SSH_HOST: ${{ secrets.SSH_HOST }}
