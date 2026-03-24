@@ -85,6 +85,18 @@
             border-color: #333;
         }
 
+        .time-range-selector button:disabled {
+            opacity: 0.45;
+            cursor: not-allowed;
+        }
+
+        .chart-day-label {
+            margin-top: 10px;
+            font-size: 14px;
+            color: #666;
+            min-height: 1.35em;
+        }
+
         #chartjs-tooltip {
             position: absolute;
             z-index: 20;
@@ -165,10 +177,11 @@
         
         <div class="chart-container">
             <div class="time-range-selector">
-                <button onclick="updateChart('today')" id="btn-today" class="active">Today</button>
-                <button onclick="updateChart('3days')" id="btn-3days">Last 3 Days</button>
-                <button onclick="updateChart('7days')" id="btn-7days">Last 7 Days</button>
+                <button type="button" onclick="goChartDay(0)" id="btn-today" class="active">Today</button>
+                <button type="button" onclick="goChartDayRelative(-1)" id="btn-prev">Prev</button>
+                <button type="button" onclick="goChartDayRelative(1)" id="btn-next" disabled>Next</button>
             </div>
+            <div class="chart-day-label" id="chart-day-label" aria-live="polite"></div>
             <div class="chart-canvas-wrap">
                 <canvas id="usageChart"></canvas>
             </div>
@@ -177,7 +190,8 @@
 
     <script>
         let chart = null;
-        let currentRange = 'today';
+        /** 0 = today (local calendar), -1 = yesterday, etc. */
+        let viewDayOffset = 0;
         let tooltipLocked = false;
         let lastTooltipLayout = null;
         const MAX_TOOLTIP_IPS = 8;
@@ -559,41 +573,65 @@
             return `${num} B`;
         }
 
-        function getTimeRange(range) {
+        function getViewDayBounds(offsetDays) {
             const now = new Date();
-            const start = new Date();
-            
-            switch(range) {
-                case 'today':
-                    start.setHours(0, 0, 0, 0);
-                    break;
-                case '3days':
-                    start.setDate(start.getDate() - 3);
-                    break;
-                case '7days':
-                    start.setDate(start.getDate() - 7);
-                    break;
+            const start = new Date(now);
+            start.setHours(0, 0, 0, 0);
+            start.setDate(start.getDate() + offsetDays);
+
+            let end;
+            if (offsetDays === 0) {
+                end = new Date(now);
+            } else {
+                end = new Date(start);
+                end.setHours(23, 59, 59, 999);
             }
-            
+
             return {
                 start: start.toISOString(),
-                end: now.toISOString()
+                end: end.toISOString(),
+                dayStart: start
             };
         }
 
-        function updateChart(range) {
-            currentRange = range;
-            
-            // Update button states
-            document.querySelectorAll('.time-range-selector button').forEach(btn => {
-                btn.classList.remove('active');
-            });
-            document.getElementById(`btn-${range}`).classList.add('active');
-            
-            const { start, end } = getTimeRange(range);
-            // ~1 point/3min from cron: today ~480, 3d ~1440, 7d ~3360 (headroom under API max 50000)
-            const limit =
-                range === 'today' ? 1500 : range === '3days' ? 4500 : range === '7days' ? 10500 : 4500;
+        function updateChartDayNavUi() {
+            const todayBtn = document.getElementById('btn-today');
+            const nextBtn = document.getElementById('btn-next');
+            const labelEl = document.getElementById('chart-day-label');
+            if (todayBtn) {
+                todayBtn.classList.toggle('active', viewDayOffset === 0);
+            }
+            if (nextBtn) {
+                nextBtn.disabled = viewDayOffset >= 0;
+            }
+            if (labelEl) {
+                if (viewDayOffset === 0) {
+                    labelEl.textContent = '';
+                } else {
+                    const { dayStart } = getViewDayBounds(viewDayOffset);
+                    const opts = { weekday: 'long', year: 'numeric', month: 'short', day: 'numeric' };
+                    labelEl.textContent = `Viewing: ${dayStart.toLocaleDateString(undefined, opts)}`;
+                }
+            }
+        }
+
+        function goChartDay(offsetDays) {
+            viewDayOffset = offsetDays;
+            updateChart();
+        }
+
+        function goChartDayRelative(delta) {
+            const next = viewDayOffset + delta;
+            if (next > 0) return;
+            viewDayOffset = next;
+            updateChart();
+        }
+
+        function updateChart() {
+            updateChartDayNavUi();
+
+            const { start, end } = getViewDayBounds(viewDayOffset);
+            const limit = 1500;
             fetch(`/zimo-usage/history?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}&iface=br-zimo&limit=${limit}`)
                 .then(res => res.json())
                 .then(result => {
@@ -664,12 +702,12 @@
 
         // Initial load
         updateUsage();
-        updateChart('today');
+        updateChart();
         
         // Auto-refresh every 30 seconds
         setInterval(() => {
             updateUsage();
-            updateChart(currentRange);
+            updateChart();
         }, 30000);
     </script>
 </body>
