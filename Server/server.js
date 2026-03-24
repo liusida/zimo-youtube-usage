@@ -107,12 +107,66 @@ function sanitizeIpSnapshot(rawSnapshot) {
   return rows;
 }
 
-function sanitizeIp(rawIp) {
-  if (typeof rawIp !== 'string') return null;
-  const ip = rawIp.trim();
-  const ipRegex = /^(\d{1,3}\.){3}\d{1,3}$/;
-  if (!ipRegex.test(ip)) return null;
-  return ip;
+/** @returns {number[]|null} four octets 0–255 */
+function parseIpv4Octets(ip) {
+  if (typeof ip !== 'string') return null;
+  const s = ip.trim();
+  if (!/^(\d{1,3}\.){3}\d{1,3}$/.test(s)) return null;
+  const parts = s.split('.').map((p) => parseInt(p, 10));
+  if (parts.some((n) => !Number.isFinite(n) || n < 0 || n > 255)) return null;
+  return parts;
+}
+
+/**
+ * Watch list entry: four dot-separated parts, each `*` or 0–255 (digits only).
+ * @returns {(number|null)[]|null} null = wildcard octet
+ */
+function parseWatchPattern(raw) {
+  if (typeof raw !== 'string') return null;
+  const segs = raw.trim().split('.');
+  if (segs.length !== 4) return null;
+  const out = [];
+  for (const seg of segs) {
+    if (seg === '*') {
+      out.push(null);
+    } else if (/^\d{1,3}$/.test(seg)) {
+      const n = parseInt(seg, 10);
+      if (n < 0 || n > 255) return null;
+      out.push(n);
+    } else {
+      return null;
+    }
+  }
+  return out;
+}
+
+function normalizeWatchPattern(parts) {
+  return parts.map((p) => (p === null ? '*' : String(p))).join('.');
+}
+
+/** Accepts literal IPv4 or pattern like 210.10.78.* */
+function sanitizeWatchPattern(rawIp) {
+  const parts = parseWatchPattern(rawIp);
+  if (!parts) return null;
+  return normalizeWatchPattern(parts);
+}
+
+function ipv4MatchesWatchEntry(ip, storedPattern) {
+  const octets = parseIpv4Octets(ip);
+  const patternParts = parseWatchPattern(storedPattern);
+  if (!octets || !patternParts) return false;
+  for (let i = 0; i < 4; i++) {
+    if (patternParts[i] === null) continue;
+    if (octets[i] !== patternParts[i]) return false;
+  }
+  return true;
+}
+
+function snapshotHasWatchMatch(ipRows, watchPatterns) {
+  if (!ipRows.length || !watchPatterns.length) return false;
+  return ipRows.some((ipRow) =>
+    watchPatterns.some((pat) => ipv4MatchesWatchEntry(ipRow.ip, pat))
+  );
 }
 
 // Middleware
@@ -237,13 +291,13 @@ app.get('/zimo-usage/history', (req, res) => {
         cumulative_bytes: row.cumulative_bytes
       });
     }
-    const watchIpSet = new Set(listWatchIpsStmt.all().map((row) => row.ip));
+    const watchPatterns = listWatchIpsStmt.all().map((row) => row.ip);
 
     // Reverse so client gets chronological order (oldest first) for the chart
     const data = rows.reverse().map((row) => ({
       ...row,
       ip_snapshot: ipByUsageId.get(row.id) || [],
-      has_watch_ip: (ipByUsageId.get(row.id) || []).some((ipRow) => watchIpSet.has(ipRow.ip))
+      has_watch_ip: snapshotHasWatchMatch(ipByUsageId.get(row.id) || [], watchPatterns)
     }));
     res.json({ data });
   } catch (err) {
@@ -264,9 +318,9 @@ app.get('/zimo-usage/watch-ips', (req, res) => {
 });
 
 app.post('/zimo-usage/watch-ips', (req, res) => {
-  const ip = sanitizeIp((req.body || {}).ip);
+  const ip = sanitizeWatchPattern((req.body || {}).ip);
   if (!ip) {
-    return res.status(400).json({ error: 'Invalid ip' });
+    return res.status(400).json({ error: 'Invalid ip or pattern (use IPv4 or e.g. 210.10.78.*)' });
   }
 
   try {
@@ -279,14 +333,20 @@ app.post('/zimo-usage/watch-ips', (req, res) => {
 });
 
 app.delete('/zimo-usage/watch-ips/:ip', (req, res) => {
-  const ip = sanitizeIp(decodeURIComponent(req.params.ip || ''));
-  if (!ip) {
-    return res.status(400).json({ error: 'Invalid ip' });
+  const raw = decodeURIComponent(req.params.ip || '').trim();
+  const normalized = sanitizeWatchPattern(raw);
+  if (!normalized) {
+    return res.status(400).json({ error: 'Invalid ip or pattern' });
   }
 
   try {
-    const result = deleteWatchIpStmt.run(ip);
-    res.json({ ok: true, deleted: result.changes > 0, ip });
+    let result = deleteWatchIpStmt.run(normalized);
+    let deletedKey = normalized;
+    if (result.changes === 0 && raw !== normalized) {
+      result = deleteWatchIpStmt.run(raw);
+      if (result.changes > 0) deletedKey = raw;
+    }
+    res.json({ ok: true, deleted: result.changes > 0, ip: deletedKey });
   } catch (err) {
     console.error('Failed to delete watch IP:', err);
     res.status(500).json({ error: 'Failed to delete watch IP' });

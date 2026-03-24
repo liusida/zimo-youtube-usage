@@ -126,11 +126,11 @@
 <body>
     <div class="container">
         <h1>Watch IP Manager</h1>
-        <div class="subtitle">Add IPs to highlight matching usage dots in orange on the main chart.</div>
+        <div class="subtitle">Add IPv4 addresses or patterns (<code>*</code> = any octet, e.g. <code>210.10.78.*</code>) to highlight matching usage dots in orange on the main chart.</div>
 
         <form id="ipForm">
-            <input id="ipInput" type="text" placeholder="e.g. 210.10.78.77" autocomplete="off">
-            <button class="btn-primary" type="submit">Add IP</button>
+            <input id="ipInput" type="text" placeholder="e.g. 210.10.78.77 or 210.10.78.*" autocomplete="off">
+            <button class="btn-primary" type="submit">Add</button>
         </form>
 
         <div id="status" class="status"></div>
@@ -157,13 +157,17 @@
             statusEl.className = `status ${isError ? 'err' : 'ok'}`;
         }
 
-        function isValidIpv4(ip) {
-            const ipv4 = /^(\d{1,3}\.){3}\d{1,3}$/;
-            if (!ipv4.test(ip)) return false;
-            return ip.split('.').every(part => {
-                const n = Number(part);
-                return Number.isInteger(n) && n >= 0 && n <= 255;
-            });
+        /** Same rules as server: four parts, each * or 0–255 */
+        function isValidWatchEntry(s) {
+            const segs = s.trim().split('.');
+            if (segs.length !== 4) return false;
+            for (const seg of segs) {
+                if (seg === '*') continue;
+                if (!/^\d{1,3}$/.test(seg)) return false;
+                const n = Number(seg);
+                if (!Number.isInteger(n) || n < 0 || n > 255) return false;
+            }
+            return true;
         }
 
         async function loadIps() {
@@ -229,8 +233,8 @@
         ipForm.addEventListener('submit', async (e) => {
             e.preventDefault();
             const ip = ipInput.value.trim();
-            if (!isValidIpv4(ip)) {
-                setStatus('Please enter a valid IPv4 address.', true);
+            if (!isValidWatchEntry(ip)) {
+                setStatus('Use IPv4 or a pattern: four parts, each * or 0–255 (e.g. 210.10.78.*).', true);
                 return;
             }
 

@@ -18,10 +18,10 @@ Default script is `node server.js` (see `package.json`).
 |--------|------|---------|
 | `POST` | `/zimo-usage` | Ingest usage. **Required JSON:** `iface`, `used_kb`. **Optional:** `quota_mb`, `quota_kb`, `ip_snapshot` (array of `{ "ip": "x.x.x.x", "cumulative_bytes": number }`). Saves to DB, appends `data/usage.log`, overwrites `data/usage.json`. |
 | `GET` | `/zimo-usage` | Latest entry from `data/usage.json` (same shape as stored fields: `timestamp`, `iface`, `used_kb`, `used_mb`, optional quota fields). |
-| `GET` | `/zimo-usage/history` | DB history. Query: `start`, `end` (ISO timestamps), `iface`, `limit` (default 1000, max 50000). Response: `{ "data": [ … ] }` rows with `ip_snapshot` and `has_watch_ip` for charts. |
-| `GET` | `/zimo-usage/watch-ips` | `{ "data": [ "ip", … ] }` — IPs highlighted in the UI. |
-| `POST` | `/zimo-usage/watch-ips` | Body `{ "ip": "a.b.c.d" }` — add to watch list. |
-| `DELETE` | `/zimo-usage/watch-ips/:ip` | Remove IP (URL-encoded). |
+| `GET` | `/zimo-usage/history` | DB history. Query: `start`, `end` (ISO timestamps), `iface`, `limit` (default 1000, max 50000). Response: `{ "data": [ … ] }` rows with `ip_snapshot` and `has_watch_ip` (true if any snapshot IP matches a watch IPv4 or `*` pattern). |
+| `GET` | `/zimo-usage/watch-ips` | `{ "data": [ "entry", … ] }` — watch list (IPv4 and/or patterns) used for chart highlight. |
+| `POST` | `/zimo-usage/watch-ips` | Body `{ "ip": "a.b.c.d" }` or pattern `{ "ip": "210.10.78.*" }` — four dot-separated parts, each `*` or 0–255; stored normalized. |
+| `DELETE` | `/zimo-usage/watch-ips/:ip` | Remove entry (URL-encoded). |
 | `GET` | `/health` | `{ "status": "ok", "port": 8080 }`. |
 | `GET` | `/` | Serves `public/index.html`. |
 
