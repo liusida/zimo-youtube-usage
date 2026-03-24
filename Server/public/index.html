@@ -61,12 +61,16 @@
             overflow: visible;
         }
 
-        .time-range-selector {
+        .chart-day-nav {
+            display: grid;
+            grid-template-columns: max-content minmax(0, 1fr) max-content max-content;
+            gap: 10px 14px;
+            align-items: center;
             margin-bottom: 20px;
         }
 
-        .time-range-selector button {
-            margin: 0 5px;
+        .chart-day-nav button {
+            margin: 0;
             padding: 8px 16px;
             cursor: pointer;
             border: 1px solid #ddd;
@@ -75,26 +79,60 @@
             font-size: 14px;
         }
 
-        .time-range-selector button:hover {
+        .chart-day-nav button:hover:not(:disabled) {
             background: #f5f5f5;
         }
 
-        .time-range-selector button.active {
+        .chart-day-nav button.active {
             background: #333;
             color: white;
             border-color: #333;
         }
 
-        .time-range-selector button:disabled {
+        .chart-day-nav button:disabled {
             opacity: 0.45;
             cursor: not-allowed;
         }
 
-        .chart-day-label {
-            margin-top: 10px;
-            font-size: 14px;
-            color: #666;
+        .chart-day-nav button.active:disabled {
+            opacity: 1;
+            cursor: default;
+        }
+
+        .chart-day-nav__date {
+            font-size: 15px;
+            font-weight: 600;
+            color: #333;
+            text-align: center;
+            padding: 0 4px;
             min-height: 1.35em;
+        }
+
+        @media (max-width: 500px) {
+            .chart-day-nav {
+                grid-template-columns: 1fr 1fr 1fr;
+                grid-template-rows: auto auto;
+            }
+
+            .chart-day-nav__date {
+                grid-column: 1 / -1;
+                grid-row: 1;
+            }
+
+            #btn-prev {
+                grid-column: 1;
+                grid-row: 2;
+            }
+
+            #btn-next {
+                grid-column: 2;
+                grid-row: 2;
+            }
+
+            #btn-today {
+                grid-column: 3;
+                grid-row: 2;
+            }
         }
 
         #chartjs-tooltip {
@@ -176,12 +214,12 @@
         <div class="label" id="label">used today</div>
         
         <div class="chart-container">
-            <div class="time-range-selector">
-                <button type="button" onclick="goChartDay(0)" id="btn-today" class="active">Today</button>
-                <button type="button" onclick="goChartDayRelative(-1)" id="btn-prev">Prev</button>
-                <button type="button" onclick="goChartDayRelative(1)" id="btn-next" disabled>Next</button>
+            <div class="chart-day-nav" role="group" aria-label="Day navigation">
+                <button type="button" onclick="goChartDayRelative(-1)" id="btn-prev" aria-label="Previous day">Prev</button>
+                <div class="chart-day-nav__date" id="chart-day-label" aria-live="polite"></div>
+                <button type="button" onclick="goChartDayRelative(1)" id="btn-next" disabled aria-label="Next day">Next</button>
+                <button type="button" onclick="goChartDay(0)" id="btn-today" class="active" aria-label="Jump to today">Today</button>
             </div>
-            <div class="chart-day-label" id="chart-day-label" aria-live="polite"></div>
             <div class="chart-canvas-wrap">
                 <canvas id="usageChart"></canvas>
             </div>
@@ -600,18 +638,15 @@
             const labelEl = document.getElementById('chart-day-label');
             if (todayBtn) {
                 todayBtn.classList.toggle('active', viewDayOffset === 0);
+                todayBtn.disabled = viewDayOffset === 0;
             }
             if (nextBtn) {
                 nextBtn.disabled = viewDayOffset >= 0;
             }
             if (labelEl) {
-                if (viewDayOffset === 0) {
-                    labelEl.textContent = '';
-                } else {
-                    const { dayStart } = getViewDayBounds(viewDayOffset);
-                    const opts = { weekday: 'long', year: 'numeric', month: 'short', day: 'numeric' };
-                    labelEl.textContent = `Viewing: ${dayStart.toLocaleDateString(undefined, opts)}`;
-                }
+                const { dayStart } = getViewDayBounds(viewDayOffset);
+                const opts = { weekday: 'long', year: 'numeric', month: 'short', day: 'numeric' };
+                labelEl.textContent = dayStart.toLocaleDateString(undefined, opts);
             }
         }
 
