@@ -19,6 +19,9 @@
 # npm ci prepends that bin dir to PATH so install scripts (node-gyp / prebuild) use Node 22, not /usr/bin/node.
 # Set as secret OR variable (secret wins). Trim whitespace.
 #
+# npm ci runs only when Server/package.json or Server/package-lock.json changed in the push (git diff),
+# or workflow_dispatch, or remote ~/zimo-usage/node_modules is missing — otherwise skipped for faster deploy.
+#
 # GitHub only loads workflows from .github/workflows/ (not .git/).
 
 name: Deploy Server
@@ -41,6 +44,37 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect Server dependency manifest changes
+        id: deps
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "reason=workflow_dispatch" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          BEFORE="${{ github.event.before }}"
+          AFTER="${{ github.sha }}"
+          if [ -z "$BEFORE" ] || [ "$BEFORE" = "0000000000000000000000000000000000000000" ]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "reason=no-before-sha" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if ! git cat-file -e "${BEFORE}^{commit}" 2>/dev/null; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "reason=before-unavailable" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if git diff --name-only "${BEFORE}" "${AFTER}" | grep -qE '^Server/package\.json$|^Server/package-lock\.json$'; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "reason=manifest-touched" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "reason=manifest-unchanged" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Add server host keys
         env:
@@ -135,6 +169,8 @@ jobs:
           DEPLOY_POST_CMD: ${{ secrets.DEPLOY_POST_CMD }}
           DEPLOY_NPM_BIN_SECRET: ${{ secrets.DEPLOY_NPM_BIN }}
           DEPLOY_NPM_BIN_VAR: ${{ vars.DEPLOY_NPM_BIN }}
+          DEPS_CHANGED: ${{ steps.deps.outputs.changed }}
+          DEPS_REASON: ${{ steps.deps.outputs.reason }}
         run: |
           set -euo pipefail
           DEPLOY_NPM_BIN="${DEPLOY_NPM_BIN_SECRET:-}"
@@ -145,17 +181,32 @@ jobs:
             -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
             "${SSH_USER}@${SSH_HOST}")
 
-          if [ -n "${DEPLOY_NPM_BIN:-}" ]; then
-            NPM_FOR_CI="$DEPLOY_NPM_BIN"
-            [[ "$NPM_FOR_CI" == */npm ]] || NPM_FOR_CI="${NPM_FOR_CI%/}/npm"
-            BIN_DIR="${NPM_FOR_CI%/*}"
-            Q_NPM=$(printf '%q' "$NPM_FOR_CI")
-            Q_BIN_DIR=$(printf '%q' "$BIN_DIR")
-            # Child processes often invoke `node` from PATH; SSH leaves PATH=/usr/bin first (Node 18).
-            "${SSH_BASE[@]}" "cd \$HOME/zimo-usage && PATH=${Q_BIN_DIR}:\$PATH ${Q_NPM} ci --omit=dev"
+          REMOTE_HAS_MOD=$("${SSH_BASE[@]}" '[ -d "$HOME/zimo-usage/node_modules" ] && echo yes || echo no' | tr -d '\r\n')
+          echo "deps_changed=${DEPS_CHANGED} (${DEPS_REASON}), remote node_modules=${REMOTE_HAS_MOD}"
+
+          RUN_NPM_CI=0
+          if [ "$REMOTE_HAS_MOD" != "yes" ]; then
+            echo "Running npm ci (remote node_modules missing)"
+            RUN_NPM_CI=1
+          elif [ "${DEPS_CHANGED:-}" = "true" ]; then
+            echo "Running npm ci (Server/package.json or package-lock.json changed)"
+            RUN_NPM_CI=1
           else
-            echo "::warning title=Set DEPLOY_NPM_BIN::Native deps (e.g. better-sqlite3) need the same Node as systemd. Add secret or variable DEPLOY_NPM_BIN = full path to npm (see workflow comments)."
-            "${SSH_BASE[@]}" "bash -lc \"cd \$HOME/zimo-usage && npm ci --omit=dev\""
+            echo "Skipping npm ci — use workflow_dispatch or change manifests to force reinstall"
+          fi
+
+          if [ "$RUN_NPM_CI" -eq 1 ]; then
+            if [ -n "${DEPLOY_NPM_BIN:-}" ]; then
+              NPM_FOR_CI="$DEPLOY_NPM_BIN"
+              [[ "$NPM_FOR_CI" == */npm ]] || NPM_FOR_CI="${NPM_FOR_CI%/}/npm"
+              BIN_DIR="${NPM_FOR_CI%/*}"
+              Q_NPM=$(printf '%q' "$NPM_FOR_CI")
+              Q_BIN_DIR=$(printf '%q' "$BIN_DIR")
+              "${SSH_BASE[@]}" "cd \$HOME/zimo-usage && PATH=${Q_BIN_DIR}:\$PATH ${Q_NPM} ci --omit=dev"
+            else
+              echo "::warning title=Set DEPLOY_NPM_BIN::Native deps (e.g. better-sqlite3) need the same Node as systemd. Add secret or variable DEPLOY_NPM_BIN = full path to npm (see workflow comments)."
+              "${SSH_BASE[@]}" "bash -lc \"cd \$HOME/zimo-usage && npm ci --omit=dev\""
+            fi
           fi
 
           if [ -n "${DEPLOY_POST_CMD:-}" ]; then
