@@ -645,7 +645,7 @@
             }
             if (labelEl) {
                 const { dayStart } = getViewDayBounds(viewDayOffset);
-                const opts = { weekday: 'long', year: 'numeric', month: 'short', day: 'numeric' };
+                const opts = { weekday: 'short', year: 'numeric', month: 'short', day: 'numeric' };
                 labelEl.textContent = dayStart.toLocaleDateString(undefined, opts);
             }
         }
