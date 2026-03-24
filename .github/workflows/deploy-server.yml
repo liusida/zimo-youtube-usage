@@ -15,8 +15,9 @@
 #
 # DEPLOY_NPM_BIN — path to npm on the server (same Node as systemd), e.g.
 #   .../v22.18.0/bin/npm   (preferred)
-#   .../v22.18.0/bin       (bin directory — workflow appends /npm for ci, /node for version check)
-# Set as secret OR variable (secret wins). Trim whitespace; no trailing junk on the secret value.
+#   .../v22.18.0/bin       (bin directory — workflow appends /npm for ci)
+# npm ci prepends that bin dir to PATH so install scripts (node-gyp / prebuild) use Node 22, not /usr/bin/node.
+# Set as secret OR variable (secret wins). Trim whitespace.
 #
 # GitHub only loads workflows from .github/workflows/ (not .git/).
 
@@ -114,9 +115,13 @@ jobs:
             [[ "$NPM_FOR_CI" == */npm ]] || NPM_FOR_CI="${NPM_FOR_CI%/}/npm"
             Q_NPM=$(printf '%q' "$NPM_FOR_CI")
             Q_NODE=$(printf '%q' "$(node_bin_for_npm_path "$DEPLOY_NPM_BIN")")
+            BIN_DIR="${NPM_FOR_CI%/*}"
+            Q_BIN_DIR=$(printf '%q' "$BIN_DIR")
             echo "Pinned npm: $NPM_FOR_CI"
             echo "Paired node: $(node_bin_for_npm_path "$DEPLOY_NPM_BIN")"
             "${SSH_BASE[@]}" "${Q_NPM} -v && ${Q_NODE} -v"
+            echo "command -v node when PATH starts with bin (used during npm ci):"
+            "${SSH_BASE[@]}" "PATH=${Q_BIN_DIR}:\$PATH command -v node && PATH=${Q_BIN_DIR}:\$PATH node -v"
             echo "::endgroup::"
           else
             echo "DEPLOY_NPM_BIN not set — npm ci uses bash -lc npm above."
@@ -143,8 +148,11 @@ jobs:
           if [ -n "${DEPLOY_NPM_BIN:-}" ]; then
             NPM_FOR_CI="$DEPLOY_NPM_BIN"
             [[ "$NPM_FOR_CI" == */npm ]] || NPM_FOR_CI="${NPM_FOR_CI%/}/npm"
+            BIN_DIR="${NPM_FOR_CI%/*}"
             Q_NPM=$(printf '%q' "$NPM_FOR_CI")
-            "${SSH_BASE[@]}" "cd \$HOME/zimo-usage && ${Q_NPM} ci --omit=dev"
+            Q_BIN_DIR=$(printf '%q' "$BIN_DIR")
+            # Child processes often invoke `node` from PATH; SSH leaves PATH=/usr/bin first (Node 18).
+            "${SSH_BASE[@]}" "cd \$HOME/zimo-usage && PATH=${Q_BIN_DIR}:\$PATH ${Q_NPM} ci --omit=dev"
           else
             echo "::warning title=Set DEPLOY_NPM_BIN::Native deps (e.g. better-sqlite3) need the same Node as systemd. Add secret or variable DEPLOY_NPM_BIN = full path to npm (see workflow comments)."
             "${SSH_BASE[@]}" "bash -lc \"cd \$HOME/zimo-usage && npm ci --omit=dev\""
