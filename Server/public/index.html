@@ -167,6 +167,7 @@
             <div class="time-range-selector">
                 <button onclick="updateChart('today')" id="btn-today" class="active">Today</button>
                 <button onclick="updateChart('3days')" id="btn-3days">Last 3 Days</button>
+                <button onclick="updateChart('7days')" id="btn-7days">Last 7 Days</button>
             </div>
             <div class="chart-canvas-wrap">
                 <canvas id="usageChart"></canvas>
@@ -569,6 +570,9 @@
                 case '3days':
                     start.setDate(start.getDate() - 3);
                     break;
+                case '7days':
+                    start.setDate(start.getDate() - 7);
+                    break;
             }
             
             return {
@@ -587,8 +591,9 @@
             document.getElementById(`btn-${range}`).classList.add('active');
             
             const { start, end } = getTimeRange(range);
-            // ~1 point/min: today = 1440, 3 days = 4320
-            const limit = range === 'today' ? 1500 : 4500;
+            // ~1 point/3min from cron: today ~480, 3d ~1440, 7d ~3360 (headroom under API max 50000)
+            const limit =
+                range === 'today' ? 1500 : range === '3days' ? 4500 : range === '7days' ? 10500 : 4500;
             fetch(`/zimo-usage/history?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}&iface=br-zimo&limit=${limit}`)
                 .then(res => res.json())
                 .then(result => {
