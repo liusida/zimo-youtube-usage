@@ -13,6 +13,9 @@
 #   SSH_PORT          — default 22
 #   DEPLOY_POST_CMD   — after npm ci (e.g. systemctl --user restart zimo-usage.service)
 #
+# npm ci runs via bash -lc so ~/.profile / nvm match the Node used in systemd (required for
+# better-sqlite3 native builds — plain ssh runs a non-interactive shell and may use a different Node).
+#
 # GitHub only loads workflows from .github/workflows/ (not .git/).
 
 name: Deploy Server
@@ -81,7 +84,7 @@ jobs:
           SSH_BASE=(ssh -p "${PORT}" \
             -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
             "${SSH_USER}@${SSH_HOST}")
-          "${SSH_BASE[@]}" 'cd $HOME/zimo-usage && npm ci --omit=dev'
+          "${SSH_BASE[@]}" "bash -lc \"cd \$HOME/zimo-usage && npm ci --omit=dev\""
           if [ -n "${DEPLOY_POST_CMD:-}" ]; then
             "${SSH_BASE[@]}" "bash -lc $(printf '%q' "$DEPLOY_POST_CMD")"
           fi
