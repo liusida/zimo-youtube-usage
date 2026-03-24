@@ -13,8 +13,11 @@
 #   SSH_PORT          — default 22
 #   DEPLOY_POST_CMD   — after npm ci (e.g. systemctl --user restart zimo-usage.service)
 #
-# npm ci runs via bash -lc so ~/.profile / nvm match the Node used in systemd (required for
-# better-sqlite3 native builds — plain ssh runs a non-interactive shell and may use a different Node).
+# Repository variable (Settings → Secrets and variables → Actions → Variables):
+#   DEPLOY_NPM_BIN    — full path to npm on the server, same Node as systemd ExecStart
+#                       (e.g. /home/dictionary/.nvm/versions/node/v22.18.0/bin/npm).
+#                       Strongly recommended for better-sqlite3 — avoids NODE_MODULE_VERSION mismatch.
+#                       If unset, falls back to bash -lc + npm (may use a different Node over SSH).
 #
 # GitHub only loads workflows from .github/workflows/ (not .git/).
 
@@ -78,13 +81,22 @@ jobs:
           SSH_USER: ${{ secrets.SSH_USER }}
           SSH_PORT: ${{ secrets.SSH_PORT }}
           DEPLOY_POST_CMD: ${{ secrets.DEPLOY_POST_CMD }}
+          DEPLOY_NPM_BIN: ${{ vars.DEPLOY_NPM_BIN }}
         run: |
           set -euo pipefail
           PORT="${SSH_PORT:-22}"
           SSH_BASE=(ssh -p "${PORT}" \
             -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
             "${SSH_USER}@${SSH_HOST}")
-          "${SSH_BASE[@]}" "bash -lc \"cd \$HOME/zimo-usage && npm ci --omit=dev\""
+
+          if [ -n "${DEPLOY_NPM_BIN:-}" ]; then
+            Q_NPM=$(printf '%q' "$DEPLOY_NPM_BIN")
+            "${SSH_BASE[@]}" "cd \$HOME/zimo-usage && ${Q_NPM} ci --omit=dev"
+          else
+            echo "::warning title=Set DEPLOY_NPM_BIN::Native deps (e.g. better-sqlite3) need the same Node as systemd. Add repo variable DEPLOY_NPM_BIN = full path to npm (see workflow comments)."
+            "${SSH_BASE[@]}" "bash -lc \"cd \$HOME/zimo-usage && npm ci --omit=dev\""
+          fi
+
           if [ -n "${DEPLOY_POST_CMD:-}" ]; then
             "${SSH_BASE[@]}" "bash -lc $(printf '%q' "$DEPLOY_POST_CMD")"
           fi
