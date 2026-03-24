@@ -13,11 +13,10 @@
 #   SSH_PORT          — default 22
 #   DEPLOY_POST_CMD   — after npm ci (e.g. systemctl --user restart zimo-usage.service)
 #
-# Repository variable (Settings → Secrets and variables → Actions → Variables):
-#   DEPLOY_NPM_BIN    — full path to npm on the server, same Node as systemd ExecStart
-#                       (e.g. /home/dictionary/.nvm/versions/node/v22.18.0/bin/npm).
-#                       Strongly recommended for better-sqlite3 — avoids NODE_MODULE_VERSION mismatch.
-#                       If unset, falls back to bash -lc + npm (may use a different Node over SSH).
+# DEPLOY_NPM_BIN — full path to npm on the server (same Node as systemd ExecStart), e.g.
+#   /home/dictionary/.nvm/versions/node/v22.18.0/bin/npm
+# Set as repository secret OR variable (secret wins if both set). Strongly recommended for
+# better-sqlite3. If unset, falls back to bash -lc + npm (often /usr/bin → wrong Node).
 #
 # GitHub only loads workflows from .github/workflows/ (not .git/).
 
@@ -81,9 +80,12 @@ jobs:
           SSH_HOST: ${{ secrets.SSH_HOST }}
           SSH_USER: ${{ secrets.SSH_USER }}
           SSH_PORT: ${{ secrets.SSH_PORT }}
-          DEPLOY_NPM_BIN: ${{ vars.DEPLOY_NPM_BIN }}
+          DEPLOY_NPM_BIN_SECRET: ${{ secrets.DEPLOY_NPM_BIN }}
+          DEPLOY_NPM_BIN_VAR: ${{ vars.DEPLOY_NPM_BIN }}
         run: |
           set -euo pipefail
+          DEPLOY_NPM_BIN="${DEPLOY_NPM_BIN_SECRET:-}"
+          if [ -z "$DEPLOY_NPM_BIN" ]; then DEPLOY_NPM_BIN="${DEPLOY_NPM_BIN_VAR:-}"; fi
           PORT="${SSH_PORT:-22}"
           SSH_BASE=(ssh -p "${PORT}" \
             -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
@@ -93,7 +95,7 @@ jobs:
           "${SSH_BASE[@]}" 'echo "node: $(command -v node 2>/dev/null || echo none)"; echo "npm: $(command -v npm 2>/dev/null || echo none)"; node -v 2>/dev/null || true; npm -v 2>/dev/null || true'
           echo "::endgroup::"
 
-          echo "::group::bash -lc (same as fallback npm ci when DEPLOY_NPM_BIN unset)"
+          echo "::group::bash -lc (fallback npm ci when DEPLOY_NPM_BIN secret/var unset)"
           REMOTE_PATH_CHECK='echo "node: $(command -v node)"; echo "npm: $(command -v npm)"; node -v; npm -v'
           "${SSH_BASE[@]}" "bash -lc $(printf '%q' "$REMOTE_PATH_CHECK")"
           echo "::endgroup::"
@@ -102,7 +104,7 @@ jobs:
             echo "::group::DEPLOY_NPM_BIN (pinned for npm ci)"
             Q_NPM=$(printf '%q' "$DEPLOY_NPM_BIN")
             Q_NODE=$(printf '%q' "${DEPLOY_NPM_BIN%/npm}node")
-            echo "Variable: $DEPLOY_NPM_BIN"
+            echo "Pinned: $DEPLOY_NPM_BIN"
             "${SSH_BASE[@]}" "${Q_NPM} -v && ${Q_NODE} -v"
             echo "::endgroup::"
           else
@@ -115,9 +117,12 @@ jobs:
           SSH_USER: ${{ secrets.SSH_USER }}
           SSH_PORT: ${{ secrets.SSH_PORT }}
           DEPLOY_POST_CMD: ${{ secrets.DEPLOY_POST_CMD }}
-          DEPLOY_NPM_BIN: ${{ vars.DEPLOY_NPM_BIN }}
+          DEPLOY_NPM_BIN_SECRET: ${{ secrets.DEPLOY_NPM_BIN }}
+          DEPLOY_NPM_BIN_VAR: ${{ vars.DEPLOY_NPM_BIN }}
         run: |
           set -euo pipefail
+          DEPLOY_NPM_BIN="${DEPLOY_NPM_BIN_SECRET:-}"
+          if [ -z "$DEPLOY_NPM_BIN" ]; then DEPLOY_NPM_BIN="${DEPLOY_NPM_BIN_VAR:-}"; fi
           PORT="${SSH_PORT:-22}"
           SSH_BASE=(ssh -p "${PORT}" \
             -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
@@ -127,7 +132,7 @@ jobs:
             Q_NPM=$(printf '%q' "$DEPLOY_NPM_BIN")
             "${SSH_BASE[@]}" "cd \$HOME/zimo-usage && ${Q_NPM} ci --omit=dev"
           else
-            echo "::warning title=Set DEPLOY_NPM_BIN::Native deps (e.g. better-sqlite3) need the same Node as systemd. Add repo variable DEPLOY_NPM_BIN = full path to npm (see workflow comments)."
+            echo "::warning title=Set DEPLOY_NPM_BIN::Native deps (e.g. better-sqlite3) need the same Node as systemd. Add secret or variable DEPLOY_NPM_BIN = full path to npm (see workflow comments)."
             "${SSH_BASE[@]}" "bash -lc \"cd \$HOME/zimo-usage && npm ci --omit=dev\""
           fi
 
