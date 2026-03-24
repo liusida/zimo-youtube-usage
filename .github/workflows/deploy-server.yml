@@ -13,10 +13,10 @@
 #   SSH_PORT          — default 22
 #   DEPLOY_POST_CMD   — after npm ci (e.g. systemctl --user restart zimo-usage.service)
 #
-# DEPLOY_NPM_BIN — full path to npm on the server (same Node as systemd ExecStart), e.g.
-#   /home/dictionary/.nvm/versions/node/v22.18.0/bin/npm
-# Set as repository secret OR variable (secret wins if both set). Strongly recommended for
-# better-sqlite3. If unset, falls back to bash -lc + npm (often /usr/bin → wrong Node).
+# DEPLOY_NPM_BIN — path to npm on the server (same Node as systemd), e.g.
+#   .../v22.18.0/bin/npm   (preferred)
+#   .../v22.18.0/bin       (bin directory — workflow appends /npm for ci, /node for version check)
+# Set as secret OR variable (secret wins). Trim whitespace; no trailing junk on the secret value.
 #
 # GitHub only loads workflows from .github/workflows/ (not .git/).
 
@@ -86,10 +86,18 @@ jobs:
           set -euo pipefail
           DEPLOY_NPM_BIN="${DEPLOY_NPM_BIN_SECRET:-}"
           if [ -z "$DEPLOY_NPM_BIN" ]; then DEPLOY_NPM_BIN="${DEPLOY_NPM_BIN_VAR:-}"; fi
+          DEPLOY_NPM_BIN="$(printf '%s' "$DEPLOY_NPM_BIN" | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
           PORT="${SSH_PORT:-22}"
           SSH_BASE=(ssh -p "${PORT}" \
             -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
             "${SSH_USER}@${SSH_HOST}")
+
+          node_bin_for_npm_path() {
+            local p="$1"
+            if [[ "$p" == */npm ]]; then printf '%s' "${p%/npm}node"; return; fi
+            if [[ "$p" == */node ]]; then printf '%s' "$p"; return; fi
+            printf '%s/node' "$p"
+          }
 
           echo "::group::Default SSH remote command (non-login PATH)"
           "${SSH_BASE[@]}" 'echo "node: $(command -v node 2>/dev/null || echo none)"; echo "npm: $(command -v npm 2>/dev/null || echo none)"; node -v 2>/dev/null || true; npm -v 2>/dev/null || true'
@@ -102,9 +110,12 @@ jobs:
 
           if [ -n "${DEPLOY_NPM_BIN:-}" ]; then
             echo "::group::DEPLOY_NPM_BIN (pinned for npm ci)"
-            Q_NPM=$(printf '%q' "$DEPLOY_NPM_BIN")
-            Q_NODE=$(printf '%q' "${DEPLOY_NPM_BIN%/npm}node")
-            echo "Pinned: $DEPLOY_NPM_BIN"
+            NPM_FOR_CI="$DEPLOY_NPM_BIN"
+            [[ "$NPM_FOR_CI" == */npm ]] || NPM_FOR_CI="${NPM_FOR_CI%/}/npm"
+            Q_NPM=$(printf '%q' "$NPM_FOR_CI")
+            Q_NODE=$(printf '%q' "$(node_bin_for_npm_path "$DEPLOY_NPM_BIN")")
+            echo "Pinned npm: $NPM_FOR_CI"
+            echo "Paired node: $(node_bin_for_npm_path "$DEPLOY_NPM_BIN")"
             "${SSH_BASE[@]}" "${Q_NPM} -v && ${Q_NODE} -v"
             echo "::endgroup::"
           else
@@ -123,13 +134,16 @@ jobs:
           set -euo pipefail
           DEPLOY_NPM_BIN="${DEPLOY_NPM_BIN_SECRET:-}"
           if [ -z "$DEPLOY_NPM_BIN" ]; then DEPLOY_NPM_BIN="${DEPLOY_NPM_BIN_VAR:-}"; fi
+          DEPLOY_NPM_BIN="$(printf '%s' "$DEPLOY_NPM_BIN" | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
           PORT="${SSH_PORT:-22}"
           SSH_BASE=(ssh -p "${PORT}" \
             -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
             "${SSH_USER}@${SSH_HOST}")
 
           if [ -n "${DEPLOY_NPM_BIN:-}" ]; then
-            Q_NPM=$(printf '%q' "$DEPLOY_NPM_BIN")
+            NPM_FOR_CI="$DEPLOY_NPM_BIN"
+            [[ "$NPM_FOR_CI" == */npm ]] || NPM_FOR_CI="${NPM_FOR_CI%/}/npm"
+            Q_NPM=$(printf '%q' "$NPM_FOR_CI")
             "${SSH_BASE[@]}" "cd \$HOME/zimo-usage && ${Q_NPM} ci --omit=dev"
           else
             echo "::warning title=Set DEPLOY_NPM_BIN::Native deps (e.g. better-sqlite3) need the same Node as systemd. Add secret or variable DEPLOY_NPM_BIN = full path to npm (see workflow comments)."
