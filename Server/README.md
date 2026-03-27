@@ -25,6 +25,22 @@ The server can send **one WhatsApp message per local calendar day** the first ti
 
 On first run with `WHATSAPP_GROUP_JID` set (and not disabled), the process prints a **QR code** in the server terminal; scan with WhatsApp → Linked devices. Session files are stored under **`data/whatsapp-auth/`** (already gitignored with `data/`). If you link the wrong account or get logged out, delete that folder and restart.
 
+### CLI pairing without stopping HTTP (`pair-whatsapp.mjs`)
+
+Two processes must **not** use Baileys on the **same** `data/whatsapp-auth/` folder at once (broken session / races). To keep **usage HTTP** up while pairing:
+
+1. Set **`WHATSAPP_DISABLE=1`** (or `true` / `yes`) on the **systemd user** unit (or `EnvironmentFile`), then `systemctl --user daemon-reload` if needed and **`systemctl --user restart zimo-usage`**. The API still runs; WhatsApp stays unloaded.
+2. On the server, from the app directory (e.g. `~/zimo-usage`):  
+   `node pair-whatsapp.mjs`  
+   Scan the QR in the terminal. When you see **Session open**, it exits after a short delay.
+3. Optional — print group names and JIDs (pick `WHATSAPP_GROUP_JID`):  
+   `node pair-whatsapp.mjs --list-groups`  
+   (Uses existing auth; still only one Baileys at a time on that folder.)
+4. Remove **`WHATSAPP_DISABLE`** (or set to `0`), ensure **`WHATSAPP_GROUP_JID`** is set, then **`systemctl --user restart zimo-usage`** so the service loads Baileys again.
+
+Or use **`npm run pair-whatsapp`** / **`npm run pair-whatsapp -- --list-groups`** from **`Server/`**.  
+Override auth path: **`WHATSAPP_AUTH_DIR`**.
+
 **Caveats:** Unofficial client — ban or breakage possible. Watch matching is **IPv4-only** (same as the dashboard). “Per day” uses the **server’s local timezone**; set `TZ` in systemd/Docker if needed. If a notify send fails, the row for that date is removed so a later push can retry.
 
 ## HTTP API
