@@ -102,10 +102,15 @@ jobs:
           set -euo pipefail
           PORT="${SSH_PORT:-22}"
           RSYNC_RSH="ssh -p ${PORT} -o StrictHostKeyChecking=yes -o UserKnownHostsFile=$HOME/.ssh/known_hosts"
+          # Include .env.example before '.env.*' exclude so the template still deploys;
+          # .env and other .env.* secrets on the server are never overwritten or --delete removed.
           rsync -avz \
             --delete \
             --exclude 'data/' \
             --exclude 'node_modules/' \
+            --include '.env.example' \
+            --exclude '.env.*' \
+            --exclude '.env' \
             -e "$RSYNC_RSH" \
             "Server/" "${SSH_USER}@${SSH_HOST}:~/zimo-usage/"
 
