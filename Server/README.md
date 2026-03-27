@@ -14,6 +14,16 @@ Default script is `node server.js` (see `package.json`).
 
 **Node version:** use the same major Node as production when installing (native `better-sqlite3`). Baileys 7 targets current Node LTS; avoid mixing with a system-wide older `node` for `npm install`.
 
+## Configuration (`.env` in the app folder)
+
+Secrets and toggles live next to `server.js`, not in `~/.config`:
+
+1. Copy **[`.env.example`](.env.example)** to **`.env`** in the same directory (e.g. `~/zimo-usage/.env` on the server).
+2. Set **`WHATSAPP_GROUP_JID`**, and **`WHATSAPP_DISABLE=1`** only while pairing (see below).
+3. **`.env` is gitignored** — it is not deployed from git; create or edit it on each host.
+
+On startup, **`server.js`** and **`pair-whatsapp.mjs`** load **`.env`** via [dotenv](https://www.npmjs.com/package/dotenv). Variables already set in the environment (e.g. systemd `Environment=`) are **not** overridden unless you change dotenv options.
+
 ## WhatsApp (Baileys, optional)
 
 The server can send **one WhatsApp message per local calendar day** the first time a router push’s `ip_snapshot` matches a **watch list** IP (same rules as `has_watch_ip` on history): populate **`watch_ips`** via `POST /zimo-usage/watch-ips` with YouTube/Google CDN IPv4 literals or patterns like `142.250.*.*` (four octets each `*` or digits).
@@ -29,14 +39,15 @@ On first run with `WHATSAPP_GROUP_JID` set (and not disabled), the process print
 
 Two processes must **not** use Baileys on the **same** `data/whatsapp-auth/` folder at once (broken session / races). To keep **usage HTTP** up while pairing:
 
-1. Set **`WHATSAPP_DISABLE=1`** (or `true` / `yes`) on the **systemd user** unit (or `EnvironmentFile`), then `systemctl --user daemon-reload` if needed and **`systemctl --user restart zimo-usage`**. The API still runs; WhatsApp stays unloaded.
+1. In **`.env`** (same folder as `server.js`), set **`WHATSAPP_DISABLE=1`**, save, then **`systemctl --user restart zimo-usage`** (or your process manager). The API still runs; WhatsApp stays unloaded.  
+   *(Alternatively you can set `WHATSAPP_DISABLE` in the systemd unit — env vars already set there take precedence over `.env`.)*
 2. On the server, from the app directory (e.g. `~/zimo-usage`):  
    `node pair-whatsapp.mjs`  
    Scan the QR in the terminal. When you see **Session open**, it exits after a short delay.
 3. Optional — print group names and JIDs (pick `WHATSAPP_GROUP_JID`):  
    `node pair-whatsapp.mjs --list-groups`  
    (Uses existing auth; still only one Baileys at a time on that folder.)
-4. Remove **`WHATSAPP_DISABLE`** (or set to `0`), ensure **`WHATSAPP_GROUP_JID`** is set, then **`systemctl --user restart zimo-usage`** so the service loads Baileys again.
+4. In **`.env`**, remove **`WHATSAPP_DISABLE`** or set it to **`0`**, ensure **`WHATSAPP_GROUP_JID`** is set, then **`systemctl --user restart zimo-usage`** so the service loads Baileys again.
 
 Or use **`npm run pair-whatsapp`** / **`npm run pair-whatsapp -- --list-groups`** from **`Server/`**.  
 Override auth path: **`WHATSAPP_AUTH_DIR`**.
@@ -73,7 +84,7 @@ The `data/` directory is created on startup if missing.
 
 ## Deploy / process manager
 
-**On the server**, app files live under **`~/zimo-usage/`** (contents of this `Server/` directory: `server.js`, `package.json`, `package-lock.json`, `public/`, etc.). Run `npm install --omit=dev` or `npm ci --omit=dev` there, then keep the process alive with **systemd** (`WorkingDirectory` should be that folder), **pm2**, or similar.
+**On the server**, app files live under **`~/zimo-usage/`** (contents of this `Server/` directory: `server.js`, `package.json`, `package-lock.json`, `public/`, etc.). Run `npm install --omit=dev` or `npm ci --omit=dev` there, then keep the process alive with **systemd** (`WorkingDirectory` should be that folder), **pm2**, or similar. Create **`~/zimo-usage/.env`** on the server (see **Configuration** above); it is not created by git deploy.
 
 Optional: for `scp`-based deploy, copy [`upload.sh.example`](upload.sh.example) to `upload.sh`, set `USER@YOUR_HOST` (paths already use `~/zimo-usage/`), and run it. `upload.sh` is gitignored so deploy targets stay local.
 

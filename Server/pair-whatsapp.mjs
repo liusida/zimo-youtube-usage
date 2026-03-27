@@ -2,20 +2,21 @@
  * Standalone WhatsApp pairing (CLI QR). Uses the same auth dir as server.js.
  *
  * Do NOT run while the main server is also running Baileys on this folder.
- * Set WHATSAPP_DISABLE=1 on the service, restart once, run this script, then
- * unset and restart (see Server/README.md).
+ * Set WHATSAPP_DISABLE=1 in .env (or systemd), restart the service, run this
+ * script, then clear WHATSAPP_DISABLE and restart (see Server/README.md).
  *
  * Usage (from Server/, e.g. ~/zimo-usage):
  *   node pair-whatsapp.mjs
  *   node pair-whatsapp.mjs --list-groups   # after link: print group names + JIDs
  *
- * Env:
+ * Env: loaded from .env next to this file (and process env).
  *   WHATSAPP_AUTH_DIR — override; default: ./data/whatsapp-auth (next to this file)
  */
 
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import dotenv from 'dotenv';
 import { Boom } from '@hapi/boom';
 import pino from 'pino';
 import qrcode from 'qrcode-terminal';
@@ -25,6 +26,8 @@ import makeWASocket, {
 } from '@whiskeysockets/baileys';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+dotenv.config({ path: path.join(__dirname, '.env') });
+
 const authDir =
   (process.env.WHATSAPP_AUTH_DIR || '').trim() ||
   path.join(__dirname, 'data', 'whatsapp-auth');
