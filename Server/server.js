@@ -259,9 +259,7 @@ app.post('/zimo-usage', async (req, res) => {
     if (ins.changes === 1) {
       const groupJid = (process.env.WHATSAPP_GROUP_JID || '').trim();
       const msg =
-        `Hi — just a heads-up: it looks like Zimo has started watching YouTube today ` +
-        `(${localDate}). Usage so far: about ${entry.used_mb} MB on ${iface}. ` +
-        `Hope you're both having a good day.`;
+        `It looks like Zimo has started watching YouTube today.`;
       const ok = await waModule.sendGroupMessage(groupJid, msg);
       if (!ok) {
         deleteYoutubeNotifyDayStmt.run(localDate);
