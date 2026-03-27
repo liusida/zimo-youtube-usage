@@ -1,7 +1,10 @@
 const express = require('express');
 const fs = require('fs');
 const path = require('path');
-require('dotenv').config({ path: path.join(__dirname, '.env') });
+require('dotenv').config({
+  path: path.join(__dirname, '.env'),
+  quiet: true
+});
 const Database = require('better-sqlite3');
 
 const app = express();

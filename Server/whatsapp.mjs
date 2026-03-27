@@ -1,11 +1,12 @@
 import fs from 'fs';
 import { Boom } from '@hapi/boom';
 import pino from 'pino';
-import qrcode from 'qrcode-terminal';
 import makeWASocket, {
   DisconnectReason,
+  fetchLatestWaWebVersion,
   useMultiFileAuthState
 } from '@whiskeysockets/baileys';
+import { printPairingQr } from './pairing-qr.mjs';
 
 let authDirResolved = '';
 let sock = null;
@@ -16,59 +17,69 @@ function scheduleReconnect(ms) {
   if (reconnectTimer) return;
   reconnectTimer = setTimeout(() => {
     reconnectTimer = null;
-    startSocket();
+    startSocket().catch((e) => console.error('[WhatsApp] reconnect:', e));
   }, ms);
 }
 
-function startSocket() {
-  useMultiFileAuthState(authDirResolved)
-    .then(({ state, saveCreds }) => {
-      sock = makeWASocket({
-        auth: state,
-        logger: pino({ level: 'silent' }),
-        syncFullHistory: false,
-        markOnlineOnConnect: true
-      });
-
-      sock.ev.on('creds.update', saveCreds);
-
-      sock.ev.on('connection.update', (update) => {
-        const { connection, lastDisconnect, qr } = update;
-
-        if (qr) {
-          console.log('[WhatsApp] Scan QR code with WhatsApp → Linked devices:');
-          qrcode.generate(qr, { small: true });
-        }
-
-        if (connection === 'open') {
-          connectionOpen = true;
-          console.log('[WhatsApp] session open');
-        }
-
-        if (connection === 'close') {
-          connectionOpen = false;
-          const err = lastDisconnect?.error;
-          const code =
-            err instanceof Boom ? err.output?.statusCode : undefined;
-          const loggedOut = code === DisconnectReason.loggedOut;
-          console.log(
-            '[WhatsApp] connection closed',
-            code !== undefined ? `(code ${code})` : err?.message || ''
-          );
-          if (loggedOut) {
-            console.log(
-              '[WhatsApp] Logged out. Remove the whatsapp-auth folder and restart to pair again.'
-            );
-            return;
-          }
-          scheduleReconnect(3000);
-        }
-      });
-    })
-    .catch((e) => {
-      console.error('[WhatsApp] auth/connect error:', e);
-      scheduleReconnect(5000);
+async function startSocket() {
+  try {
+    const { version, isLatest, error } = await fetchLatestWaWebVersion();
+    if (!isLatest) {
+      const errMsg =
+        error && typeof error === 'object' && 'message' in error
+          ? error.message
+          : String(error);
+      console.warn('[WhatsApp] WA version fetch failed, using bundled:', errMsg);
+    }
+    const { state, saveCreds } = await useMultiFileAuthState(authDirResolved);
+    sock = makeWASocket({
+      auth: state,
+      version,
+      logger: pino({ level: 'silent' }),
+      syncFullHistory: false,
+      markOnlineOnConnect: true
     });
+
+    sock.ev.on('creds.update', saveCreds);
+
+    sock.ev.on('connection.update', (update) => {
+      const { connection, lastDisconnect, qr } = update;
+
+      if (qr) {
+        printPairingQr(
+          qr,
+          '[WhatsApp] Scan QR code with WhatsApp → Linked devices:'
+        );
+      }
+
+      if (connection === 'open') {
+        connectionOpen = true;
+        console.log('[WhatsApp] session open');
+      }
+
+      if (connection === 'close') {
+        connectionOpen = false;
+        const err = lastDisconnect?.error;
+        const code =
+          err instanceof Boom ? err.output?.statusCode : undefined;
+        const loggedOut = code === DisconnectReason.loggedOut;
+        console.log(
+          '[WhatsApp] connection closed',
+          code !== undefined ? `(code ${code})` : err?.message || ''
+        );
+        if (loggedOut) {
+          console.log(
+            '[WhatsApp] Logged out. Remove the whatsapp-auth folder and restart to pair again.'
+          );
+          return;
+        }
+        scheduleReconnect(3000);
+      }
+    });
+  } catch (e) {
+    console.error('[WhatsApp] auth/connect error:', e);
+    scheduleReconnect(5000);
+  }
 }
 
 /**
@@ -79,7 +90,7 @@ export function initWhatsApp(opts) {
   if (!fs.existsSync(authDirResolved)) {
     fs.mkdirSync(authDirResolved, { recursive: true });
   }
-  startSocket();
+  startSocket().catch((e) => console.error('[WhatsApp] start:', e));
 }
 
 /**

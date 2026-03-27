@@ -19,14 +19,15 @@ import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
 import { Boom } from '@hapi/boom';
 import pino from 'pino';
-import qrcode from 'qrcode-terminal';
 import makeWASocket, {
   DisconnectReason,
+  fetchLatestWaWebVersion,
   useMultiFileAuthState
 } from '@whiskeysockets/baileys';
+import { printPairingQr } from './pairing-qr.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-dotenv.config({ path: path.join(__dirname, '.env') });
+dotenv.config({ path: path.join(__dirname, '.env'), quiet: true });
 
 const authDir =
   (process.env.WHATSAPP_AUTH_DIR || '').trim() ||
@@ -42,7 +43,7 @@ function scheduleReconnect(ms) {
   if (reconnectTimer || finishing) return;
   reconnectTimer = setTimeout(() => {
     reconnectTimer = null;
-    startSocket();
+    startSocket().catch((e) => console.error('[pair-whatsapp] reconnect:', e));
   }, ms);
 }
 
@@ -75,63 +76,73 @@ async function afterOpen() {
   process.exit(0);
 }
 
-function startSocket() {
+async function startSocket() {
   if (finishing) return;
   clearReconnectTimer();
 
-  useMultiFileAuthState(authDir)
-    .then(({ state, saveCreds }) => {
-      sock = makeWASocket({
-        auth: state,
-        logger: pino({ level: 'silent' }),
-        syncFullHistory: false,
-        markOnlineOnConnect: true
-      });
+  try {
+    const { version, isLatest, error } = await fetchLatestWaWebVersion();
+    if (!isLatest) {
+      const errMsg =
+        error && typeof error === 'object' && 'message' in error
+          ? error.message
+          : String(error);
+      console.warn('[pair-whatsapp] WA version fetch failed, using bundled:', errMsg);
+    }
 
-      sock.ev.on('creds.update', saveCreds);
-
-      sock.ev.on('connection.update', (update) => {
-        const { connection, lastDisconnect, qr } = update;
-
-        if (qr) {
-          console.log('[pair-whatsapp] Scan with WhatsApp → Linked devices:\n');
-          qrcode.generate(qr, { small: true });
-        }
-
-        if (connection === 'open') {
-          if (finishing) return;
-          finishing = true;
-          clearReconnectTimer();
-          console.log('[pair-whatsapp] Session open — credentials saved.');
-          afterOpen().catch((e) => {
-            console.error(e);
-            process.exit(1);
-          });
-        }
-
-        if (connection === 'close') {
-          const err = lastDisconnect?.error;
-          const code =
-            err instanceof Boom ? err.output?.statusCode : undefined;
-          const loggedOut = code === DisconnectReason.loggedOut;
-          console.log(
-            '[pair-whatsapp] Connection closed',
-            code !== undefined ? `(code ${code})` : err?.message || ''
-          );
-          if (loggedOut) {
-            console.log(
-              '[pair-whatsapp] Logged out. Delete the auth folder and run again to re-pair.'
-            );
-            process.exit(1);
-          }
-          if (!finishing) scheduleReconnect(3000);
-        }
-      });
-    })
-    .catch((e) => {
-      console.error('[pair-whatsapp] Error:', e);
-      if (!finishing) scheduleReconnect(5000);
+    const { state, saveCreds } = await useMultiFileAuthState(authDir);
+    sock = makeWASocket({
+      auth: state,
+      version,
+      logger: pino({ level: 'silent' }),
+      syncFullHistory: false,
+      markOnlineOnConnect: true
     });
+
+    sock.ev.on('creds.update', saveCreds);
+
+    sock.ev.on('connection.update', (update) => {
+      const { connection, lastDisconnect, qr } = update;
+
+      if (qr) {
+        printPairingQr(
+          qr,
+          '[pair-whatsapp] Scan with WhatsApp → Linked devices:'
+        );
+      }
+
+      if (connection === 'open') {
+        if (finishing) return;
+        finishing = true;
+        clearReconnectTimer();
+        console.log('[pair-whatsapp] Session open — credentials saved.');
+        afterOpen().catch((e) => {
+          console.error(e);
+          process.exit(1);
+        });
+      }
+
+      if (connection === 'close') {
+        const err = lastDisconnect?.error;
+        const code = err instanceof Boom ? err.output?.statusCode : undefined;
+        const loggedOut = code === DisconnectReason.loggedOut;
+        console.log(
+          '[pair-whatsapp] Connection closed',
+          code !== undefined ? `(code ${code})` : err?.message || ''
+        );
+        if (loggedOut) {
+          console.log(
+            '[pair-whatsapp] Logged out. Delete the auth folder and run again to re-pair.'
+          );
+          process.exit(1);
+        }
+        if (!finishing) scheduleReconnect(3000);
+      }
+    });
+  } catch (e) {
+    console.error('[pair-whatsapp] Error:', e);
+    if (!finishing) scheduleReconnect(5000);
+  }
 }
 
 if (!fs.existsSync(authDir)) {
@@ -144,4 +155,4 @@ console.error(
   '\nIf zimo-usage is running with WhatsApp enabled, stop Baileys first (WHATSAPP_DISABLE=1 + restart service).\n'
 );
 
-startSocket();
+startSocket().catch((e) => console.error('[pair-whatsapp] start:', e));

@@ -33,7 +33,7 @@ The server can send **one WhatsApp message per local calendar day** the first ti
 | `WHATSAPP_GROUP_JID` | Required to enable sends. Family **group** JID, ends with `@g.us` (from Baileys after link or WhatsApp tools). |
 | `WHATSAPP_DISABLE` | Set to `1` or `true` to turn off loading Baileys and all sends (e.g. local dev). |
 
-On first run with `WHATSAPP_GROUP_JID` set (and not disabled), the process prints a **QR code** in the server terminal; scan with WhatsApp → Linked devices. Session files are stored under **`data/whatsapp-auth/`** (already gitignored with `data/`). If you link the wrong account or get logged out, delete that folder and restart.
+On first run with `WHATSAPP_GROUP_JID` set (and not disabled), the process prints a **QR code** in the server terminal; scan with WhatsApp → Linked devices. Baileys only emits the QR string on `connection.update`; it does not draw the terminal (its old `printQRInTerminal` option is deprecated). This repo uses **`qrcode-terminal`** via [`pairing-qr.mjs`](pairing-qr.mjs). Session files live under **`data/whatsapp-auth/`** (gitignored with `data/`). If you link the wrong account or get logged out, delete that folder and restart.
 
 ### CLI pairing without stopping HTTP (`pair-whatsapp.mjs`)
 
@@ -51,6 +51,8 @@ Two processes must **not** use Baileys on the **same** `data/whatsapp-auth/` fol
 
 Or use **`npm run pair-whatsapp`** / **`npm run pair-whatsapp -- --list-groups`** from **`Server/`**.  
 Override auth path: **`WHATSAPP_AUTH_DIR`**.
+
+**Troubleshooting `Connection closed (code 405)`:** That usually means WhatsApp rejected the handshake (often a **client version mismatch**). This project calls **`fetchLatestWaWebVersion()`** before connecting so the session matches current WhatsApp Web. If you still see 405, check **outbound HTTPS** to `https://web.whatsapp.com/` (proxy/firewall), upgrade **`@whiskeysockets/baileys`**, or try from a different network.
 
 **Caveats:** Unofficial client — ban or breakage possible. Watch matching is **IPv4-only** (same as the dashboard). “Per day” uses the **server’s local timezone**; set `TZ` in systemd/Docker if needed. If a notify send fails, the row for that date is removed so a later push can retry.
 
