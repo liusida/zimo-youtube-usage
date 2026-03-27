@@ -47,6 +47,10 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS watch_ips (
     ip TEXT PRIMARY KEY
   );
+
+  CREATE TABLE IF NOT EXISTS youtube_notify_sent (
+    local_date TEXT PRIMARY KEY
+  );
 `);
 
 // Prepare statement for inserts
@@ -68,6 +72,12 @@ const deleteWatchIpStmt = db.prepare(`
 `);
 const listWatchIpsStmt = db.prepare(`
   SELECT ip FROM watch_ips ORDER BY ip ASC
+`);
+const insertYoutubeNotifyDayStmt = db.prepare(`
+  INSERT OR IGNORE INTO youtube_notify_sent (local_date) VALUES (?)
+`);
+const deleteYoutubeNotifyDayStmt = db.prepare(`
+  DELETE FROM youtube_notify_sent WHERE local_date = ?
 `);
 const insertWithIpSnapshot = db.transaction((entry, ipSnapshot) => {
   const usageInfo = insertStmt.run(
@@ -169,6 +179,34 @@ function snapshotHasWatchMatch(ipRows, watchPatterns) {
   );
 }
 
+/** Server-local calendar date YYYY-MM-DD */
+function localDateKey(d = new Date()) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+function isWhatsAppNotifyEnabled() {
+  const groupJid = (process.env.WHATSAPP_GROUP_JID || '').trim();
+  const disabled = ['1', 'true', 'yes'].includes(
+    String(process.env.WHATSAPP_DISABLE || '').toLowerCase()
+  );
+  return !!(groupJid && !disabled);
+}
+
+// Baileys client (ESM); loaded when WHATSAPP_GROUP_JID is set and WHATSAPP_DISABLE is off.
+const whatsappAuthDir = path.join(dataDir, 'whatsapp-auth');
+let waModule = null;
+if (isWhatsAppNotifyEnabled()) {
+  import('./whatsapp.mjs')
+    .then((m) => {
+      waModule = m;
+      m.initWhatsApp({ authDir: whatsappAuthDir });
+    })
+    .catch((e) => console.error('[WhatsApp] failed to load module:', e));
+}
+
 // Middleware
 app.use(express.json());
 app.use(express.static('public')); // For serving a simple HTML page if needed
@@ -185,7 +223,7 @@ app.use((req, res, next) => {
 });
 
 // POST endpoint: receive usage data from router
-app.post('/zimo-usage', (req, res) => {
+app.post('/zimo-usage', async (req, res) => {
   const { iface, used_kb, quota_mb, quota_kb, ip_snapshot } = req.body || {};
   
   if (!iface || used_kb === undefined) {
@@ -211,6 +249,29 @@ app.post('/zimo-usage', (req, res) => {
     return res.status(500).json({ error: 'Failed to save to database' });
   }
 
+  const watchPatterns = listWatchIpsStmt.all().map((row) => row.ip);
+  const nowMatch = snapshotHasWatchMatch(ipSnapshot, watchPatterns);
+  let whatsapp_notified = false;
+
+  if (nowMatch && isWhatsAppNotifyEnabled() && waModule) {
+    const localDate = localDateKey();
+    const ins = insertYoutubeNotifyDayStmt.run(localDate);
+    if (ins.changes === 1) {
+      const groupJid = (process.env.WHATSAPP_GROUP_JID || '').trim();
+      const msg =
+        `Hi — just a heads-up: it looks like Zimo has started watching YouTube today ` +
+        `(${localDate}). Usage so far: about ${entry.used_mb} MB on ${iface}. ` +
+        `Hope you're both having a good day.`;
+      const ok = await waModule.sendGroupMessage(groupJid, msg);
+      if (!ok) {
+        deleteYoutubeNotifyDayStmt.run(localDate);
+      } else {
+        whatsapp_notified = true;
+        console.log('[WhatsApp] Sent daily first-match notification');
+      }
+    }
+  }
+
   // Append to log file (for backward compatibility)
   const quotaInfo = entry.quota_mb ? ` quota=${entry.quota_mb}MB` : '';
   const logLine = `${timestamp} iface=${iface} used_kb=${used_kb} (${entry.used_mb.toFixed(2)} MB)${quotaInfo}\n`;
@@ -222,7 +283,12 @@ app.post('/zimo-usage', (req, res) => {
   const quotaMsg = entry.quota_mb ? ` (quota: ${entry.quota_mb} MB)` : '';
   console.log(`Received usage: ${used_kb} KB (${entry.used_mb} MB) on ${iface}${quotaMsg}`);
   
-  res.json({ ok: true, received: { ...entry, ip_snapshot: ipSnapshot } });
+  res.json({
+    ok: true,
+    received: { ...entry, ip_snapshot: ipSnapshot },
+    has_watch_ip: nowMatch,
+    whatsapp_notified
+  });
 });
 
 // GET endpoint: retrieve latest usage

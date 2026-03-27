@@ -12,11 +12,26 @@ npm start
 
 Default script is `node server.js` (see `package.json`).
 
+**Node version:** use the same major Node as production when installing (native `better-sqlite3`). Baileys 7 targets current Node LTS; avoid mixing with a system-wide older `node` for `npm install`.
+
+## WhatsApp (Baileys, optional)
+
+The server can send **one WhatsApp message per local calendar day** the first time a router push’s `ip_snapshot` matches a **watch list** IP (same rules as `has_watch_ip` on history): populate **`watch_ips`** via `POST /zimo-usage/watch-ips` with YouTube/Google CDN IPv4 literals or patterns like `142.250.*.*` (four octets each `*` or digits).
+
+| Env | Purpose |
+|-----|---------|
+| `WHATSAPP_GROUP_JID` | Required to enable sends. Family **group** JID, ends with `@g.us` (from Baileys after link or WhatsApp tools). |
+| `WHATSAPP_DISABLE` | Set to `1` or `true` to turn off loading Baileys and all sends (e.g. local dev). |
+
+On first run with `WHATSAPP_GROUP_JID` set (and not disabled), the process prints a **QR code** in the server terminal; scan with WhatsApp → Linked devices. Session files are stored under **`data/whatsapp-auth/`** (already gitignored with `data/`). If you link the wrong account or get logged out, delete that folder and restart.
+
+**Caveats:** Unofficial client — ban or breakage possible. Watch matching is **IPv4-only** (same as the dashboard). “Per day” uses the **server’s local timezone**; set `TZ` in systemd/Docker if needed. If a notify send fails, the row for that date is removed so a later push can retry.
+
 ## HTTP API
 
 | Method | Path | Purpose |
 |--------|------|---------|
-| `POST` | `/zimo-usage` | Ingest usage. **Required JSON:** `iface`, `used_kb`. **Optional:** `quota_mb`, `quota_kb`, `ip_snapshot` (array of `{ "ip": "x.x.x.x", "cumulative_bytes": number }`). Saves to DB, appends `data/usage.log`, overwrites `data/usage.json`. |
+| `POST` | `/zimo-usage` | Ingest usage. **Required JSON:** `iface`, `used_kb`. **Optional:** `quota_mb`, `quota_kb`, `ip_snapshot` (array of `{ "ip": "x.x.x.x", "cumulative_bytes": number }`). Saves to DB, appends `data/usage.log`, overwrites `data/usage.json`. Response may include `has_watch_ip` and `whatsapp_notified` when watch-list / WhatsApp logic applies. |
 | `GET` | `/zimo-usage` | Latest entry from `data/usage.json` (same shape as stored fields: `timestamp`, `iface`, `used_kb`, `used_mb`, optional quota fields). |
 | `GET` | `/zimo-usage/history` | DB history. Query: `start`, `end` (ISO timestamps), `iface`, `limit` (default 1000, max 50000). Response: `{ "data": [ … ] }` rows with `ip_snapshot` and `has_watch_ip` (true if any snapshot IP matches a watch IPv4 or `*` pattern). |
 | `GET` | `/zimo-usage/watch-ips` | `{ "data": [ "entry", … ] }` — watch list (IPv4 and/or patterns) used for chart highlight. |
@@ -33,7 +48,8 @@ Other files under `public/` (e.g. `ip.html`) are served by `express.static('publ
 
 | Path | Role |
 |------|------|
-| `data/usage.db` | SQLite: `usage_data`, `usage_ip_data`, `watch_ips`. |
+| `data/usage.db` | SQLite: `usage_data`, `usage_ip_data`, `watch_ips`, `youtube_notify_sent` (one row per local day a WhatsApp notify was recorded). |
+| `data/whatsapp-auth/` | Baileys multi-file auth (only if `WHATSAPP_GROUP_JID` is set and WhatsApp is not disabled). |
 | `data/usage.json` | Latest sample (updated on each POST). |
 | `data/usage.log` | One line per POST (text log). |
 
