@@ -206,6 +206,31 @@
             background: #dde3ea;
             color: #111;
         }
+
+        .chart-y-scale-row {
+            margin-top: 14px;
+            text-align: center;
+        }
+
+        .chart-y-scale-btn {
+            font-size: 12px;
+            padding: 5px 12px;
+            cursor: pointer;
+            border: 1px solid #ddd;
+            background: #fafafa;
+            border-radius: 4px;
+            color: #555;
+        }
+
+        .chart-y-scale-btn:hover {
+            background: #f0f0f0;
+        }
+
+        .chart-y-scale-btn[aria-pressed="true"] {
+            background: #e8eef5;
+            border-color: #b8c5d6;
+            color: #333;
+        }
     </style>
 </head>
 <body>
@@ -223,6 +248,9 @@
             <div class="chart-canvas-wrap">
                 <canvas id="usageChart"></canvas>
             </div>
+            <div class="chart-y-scale-row">
+                <button type="button" id="btn-y-scale" class="chart-y-scale-btn" aria-pressed="true" aria-label="Toggle Y-axis between fixed daily quota and flexible auto scale" onclick="toggleChartYAxisMode()">Y-axis: fixed to quota</button>
+            </div>
         </div>
     </div>
 
@@ -236,6 +264,48 @@
         const MIN_TOOLTIP_BYTES = 1024;
         /** Matches point highlight when Usage has a watch-listed IP in the snapshot. */
         const USAGE_HIGHLIGHT_COLOR = 'rgb(255, 159, 64)';
+
+        /** When true, Y max is current daily quota; when false, Chart.js auto-scales from data. */
+        let yAxisFixedToQuota = true;
+        /** Latest quota from /zimo-usage (for fixed scale and button label). */
+        let lastCurrentQuotaMb = null;
+
+        function syncChartYAxisScale() {
+            const yScale = chart.options.scales.y;
+            const usageDs = chart.data.datasets[0];
+            if (yAxisFixedToQuota && lastCurrentQuotaMb != null && Number.isFinite(lastCurrentQuotaMb) && lastCurrentQuotaMb > 0) {
+                yScale.max = lastCurrentQuotaMb;
+                usageDs.clip = false;
+            } else {
+                delete yScale.max;
+                usageDs.clip = true;
+            }
+        }
+
+        function updateYAxisToggleUi() {
+            const btn = document.getElementById('btn-y-scale');
+            if (!btn) return;
+            btn.setAttribute('aria-pressed', yAxisFixedToQuota ? 'true' : 'false');
+            if (yAxisFixedToQuota) {
+                if (lastCurrentQuotaMb != null && Number.isFinite(lastCurrentQuotaMb)) {
+                    btn.textContent = `Y-axis: fixed (${lastCurrentQuotaMb} MB)`;
+                    btn.title = 'Click for flexible auto scale';
+                } else {
+                    btn.textContent = 'Y-axis: fixed to quota';
+                    btn.title = 'Daily quota not loaded yet; scale matches data until /zimo-usage returns quota';
+                }
+            } else {
+                btn.textContent = 'Y-axis: flexible';
+                btn.title = 'Click to cap axis at current daily quota';
+            }
+        }
+
+        function toggleChartYAxisMode() {
+            yAxisFixedToQuota = !yAxisFixedToQuota;
+            updateYAxisToggleUi();
+            syncChartYAxisScale();
+            chart.update('none');
+        }
 
         function tooltipUsageLegendColor(item) {
             if (item.datasetIndex !== 0) return item.dataset.borderColor || '#666';
@@ -540,7 +610,8 @@
                     pointBorderColor: [],
                     pointHitRadius: 12,
                     tension: 0.1,
-                    fill: true
+                    fill: true,
+                    clip: false
                 }, {
                     label: 'Quota (MB)',
                     data: [],
@@ -662,22 +733,6 @@
             updateChart();
         }
 
-        function applyChartYMaxFromCurrentQuota(data, currentQuotaMb) {
-            const yScale = chart.options.scales.y;
-            if (!data.length) {
-                delete yScale.max;
-                return;
-            }
-            const maxUsage = Math.max(...data.map(d => Number(d.used_mb) || 0));
-            if (currentQuotaMb != null && Number.isFinite(currentQuotaMb)) {
-                const top = Math.max(maxUsage, currentQuotaMb);
-                yScale.max = top > 0 ? top * 1.02 : undefined;
-                if (yScale.max === undefined) delete yScale.max;
-            } else {
-                delete yScale.max;
-            }
-        }
-
         function updateChart() {
             updateChartDayNavUi();
 
@@ -698,12 +753,15 @@
                             ? Number(usageNow.quota_mb)
                             : null;
 
+                    lastCurrentQuotaMb = currentQuotaMb;
+                    updateYAxisToggleUi();
+
                     if (data.length === 0) {
                         chart.data.datasets[0].data = [];
                         chart.data.datasets[0].pointBackgroundColor = [];
                         chart.data.datasets[0].pointBorderColor = [];
                         chart.data.datasets[1].data = [];
-                        applyChartYMaxFromCurrentQuota([], currentQuotaMb);
+                        syncChartYAxisScale();
                         chart.update('none');
                         return;
                     }
@@ -737,7 +795,7 @@
                         chart.data.datasets[1].data = [];
                     }
 
-                    applyChartYMaxFromCurrentQuota(data, currentQuotaMb);
+                    syncChartYAxisScale();
 
                     // Skip animation: replacing the full series after a day change would tween old
                     // vertex positions to new ones (x scale jumps), which looks like lines "flying".
@@ -772,6 +830,7 @@
         }
 
         // Initial load
+        updateYAxisToggleUi();
         updateUsage();
         updateChart();
         
