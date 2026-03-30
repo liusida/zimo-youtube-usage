@@ -662,25 +662,52 @@
             updateChart();
         }
 
+        function applyChartYMaxFromCurrentQuota(data, currentQuotaMb) {
+            const yScale = chart.options.scales.y;
+            if (!data.length) {
+                delete yScale.max;
+                return;
+            }
+            const maxUsage = Math.max(...data.map(d => Number(d.used_mb) || 0));
+            if (currentQuotaMb != null && Number.isFinite(currentQuotaMb)) {
+                const top = Math.max(maxUsage, currentQuotaMb);
+                yScale.max = top > 0 ? top * 1.02 : undefined;
+                if (yScale.max === undefined) delete yScale.max;
+            } else {
+                delete yScale.max;
+            }
+        }
+
         function updateChart() {
             updateChartDayNavUi();
 
             const { start, end } = getViewDayBounds(viewDayOffset);
             const limit = 1500;
-            fetch(`/zimo-usage/history?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}&iface=br-zimo&limit=${limit}`)
-                .then(res => res.json())
-                .then(result => {
+            const historyUrl = `/zimo-usage/history?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}&iface=br-zimo&limit=${limit}`;
+
+            Promise.all([
+                fetch(historyUrl).then(res => res.json()),
+                fetch('/zimo-usage')
+                    .then(res => res.json())
+                    .catch(() => null)
+            ])
+                .then(([result, usageNow]) => {
                     const data = result.data || [];
-                    
+                    const currentQuotaMb =
+                        usageNow && !usageNow.error && usageNow.quota_mb != null
+                            ? Number(usageNow.quota_mb)
+                            : null;
+
                     if (data.length === 0) {
                         chart.data.datasets[0].data = [];
                         chart.data.datasets[0].pointBackgroundColor = [];
                         chart.data.datasets[0].pointBorderColor = [];
                         chart.data.datasets[1].data = [];
+                        applyChartYMaxFromCurrentQuota([], currentQuotaMb);
                         chart.update('none');
                         return;
                     }
-                    
+
                     // Usage data
                     chart.data.datasets[0].data = data.map(d => ({
                         x: d.timestamp,
@@ -694,9 +721,14 @@
                     chart.data.datasets[0].pointBorderColor = data.map(d =>
                         d.has_watch_ip ? 'rgb(255, 159, 64)' : 'rgb(75, 192, 192)'
                     );
-                    
-                    // Quota line if available
-                    if (data[0].quota_mb) {
+
+                    // Quota line: today's quota when known (matches y-axis); else fall back to per-point history
+                    if (currentQuotaMb != null && Number.isFinite(currentQuotaMb)) {
+                        chart.data.datasets[1].data = data.map(d => ({
+                            x: d.timestamp,
+                            y: currentQuotaMb
+                        }));
+                    } else if (data[0].quota_mb) {
                         chart.data.datasets[1].data = data.map(d => ({
                             x: d.timestamp,
                             y: d.quota_mb
@@ -704,6 +736,8 @@
                     } else {
                         chart.data.datasets[1].data = [];
                     }
+
+                    applyChartYMaxFromCurrentQuota(data, currentQuotaMb);
 
                     // Skip animation: replacing the full series after a day change would tween old
                     // vertex positions to new ones (x scale jumps), which looks like lines "flying".
