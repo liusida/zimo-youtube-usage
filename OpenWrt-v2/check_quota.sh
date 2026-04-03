@@ -10,6 +10,16 @@ echo "DEBUG: USAGE=$USAGE (persisted across reboot)"
 USAGE_MB=$((USAGE / 1024 / 1024))
 QUOTA_MB=$((QUOTA_BYTES / 1024 / 1024))
 
+# Nightly curfew: 21:00 until midnight reset (reset_quota.sh at 00:00) — block regardless of quota
+# (BusyBox ash has no 10# in $(( )), so match hours lexically)
+case "$(date +%H)" in
+    21|22|23)
+        echo "Curfew (after 9pm until midnight reset): blocking"
+        "$QUOTA_BLOCK" on
+        exit 1
+        ;;
+esac
+
 if [ "$USAGE" -gt "$QUOTA_BYTES" ]; then
     echo "Quota exceeded: ${USAGE_MB} MB / ${QUOTA_MB} MB"
     "$QUOTA_BLOCK" on
