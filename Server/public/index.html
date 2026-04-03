@@ -249,7 +249,7 @@
                 <canvas id="usageChart"></canvas>
             </div>
             <div class="chart-y-scale-row">
-                <button type="button" id="btn-y-scale" class="chart-y-scale-btn" aria-pressed="true" aria-label="Toggle Y-axis between fixed daily quota and flexible auto scale" onclick="toggleChartYAxisMode()">Y-axis: fixed to quota</button>
+                <button type="button" id="btn-y-scale" class="chart-y-scale-btn" aria-pressed="true" aria-label="Toggle Y-axis between fixed 1000 MB and flexible scale from usage only" onclick="toggleChartYAxisMode()">Y-axis: fixed (1000 MB)</button>
             </div>
         </div>
     </div>
@@ -265,43 +265,61 @@
         /** Matches point highlight when Usage has a watch-listed IP in the snapshot. */
         const USAGE_HIGHLIGHT_COLOR = 'rgb(255, 159, 64)';
 
-        /** When true, Y max is current daily quota; when false, Chart.js auto-scales from data. */
-        let yAxisFixedToQuota = true;
-        /** Latest quota from /zimo-usage (for fixed scale and button label). */
+        const CHART_Y_AXIS_MAX_FIXED_MB = 1000;
+
+        /** When true, Y max is fixed at CHART_Y_AXIS_MAX_FIXED_MB; when false, scale max follows usage only (quota ignored). */
+        let yAxisFixedMax = true;
+
+        /** Latest quota from /zimo-usage (quota line in chart; not used for Y-axis). */
         let lastCurrentQuotaMb = null;
+
+        function maxUsageYFromDataset(usageDs) {
+            let maxY = 0;
+            const pts = usageDs.data || [];
+            for (let i = 0; i < pts.length; i++) {
+                const p = pts[i];
+                const y = p && typeof p === 'object' && 'y' in p ? Number(p.y) : Number(p);
+                if (Number.isFinite(y) && y > maxY) maxY = y;
+            }
+            return maxY;
+        }
 
         function syncChartYAxisScale() {
             const yScale = chart.options.scales.y;
             const usageDs = chart.data.datasets[0];
-            if (yAxisFixedToQuota && lastCurrentQuotaMb != null && Number.isFinite(lastCurrentQuotaMb) && lastCurrentQuotaMb > 0) {
-                yScale.max = lastCurrentQuotaMb;
+            const quotaDs = chart.data.datasets[1];
+            if (yAxisFixedMax) {
+                yScale.max = CHART_Y_AXIS_MAX_FIXED_MB;
                 usageDs.clip = false;
+                quotaDs.clip = false;
             } else {
-                delete yScale.max;
+                const maxY = maxUsageYFromDataset(usageDs);
+                if (maxY > 0) {
+                    yScale.max = maxY * 1.08;
+                } else {
+                    // No usage samples yet — avoid auto scale picking up quota from dataset 1
+                    yScale.max = 100;
+                }
                 usageDs.clip = true;
+                quotaDs.clip = true;
             }
         }
 
         function updateYAxisToggleUi() {
             const btn = document.getElementById('btn-y-scale');
             if (!btn) return;
-            btn.setAttribute('aria-pressed', yAxisFixedToQuota ? 'true' : 'false');
-            if (yAxisFixedToQuota) {
-                if (lastCurrentQuotaMb != null && Number.isFinite(lastCurrentQuotaMb)) {
-                    btn.textContent = `Y-axis: fixed (${lastCurrentQuotaMb} MB)`;
-                    btn.title = 'Click for flexible auto scale';
-                } else {
-                    btn.textContent = 'Y-axis: fixed to quota';
-                    btn.title = 'Daily quota not loaded yet; scale matches data until /zimo-usage returns quota';
-                }
+            btn.setAttribute('aria-pressed', yAxisFixedMax ? 'true' : 'false');
+            if (yAxisFixedMax) {
+                btn.textContent = `Y-axis: fixed (${CHART_Y_AXIS_MAX_FIXED_MB} MB)`;
+                btn.title = 'Click for flexible scale (max from usage only; quota line may clip)';
             } else {
-                btn.textContent = 'Y-axis: flexible';
-                btn.title = 'Click to cap axis at current daily quota';
+                btn.textContent = 'Y-axis: flexible (usage)';
+                btn.title = `Click to fix Y-axis max at ${CHART_Y_AXIS_MAX_FIXED_MB} MB`;
             }
         }
 
         function toggleChartYAxisMode() {
-            yAxisFixedToQuota = !yAxisFixedToQuota;
+            yAxisFixedMax = !yAxisFixedMax;
             updateYAxisToggleUi();
             syncChartYAxisScale();
             chart.update('none');
