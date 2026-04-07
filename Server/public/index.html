@@ -317,6 +317,34 @@
             }
         }
 
+        /** In fixed mode, hide markers for points clamped to Y max (real MB is in tooltip). */
+        function syncUsagePointMarkerStyles() {
+            if (!chart) return;
+            const ds = chart.data.datasets[0];
+            const pts = ds.data || [];
+            const bg = [];
+            const bdr = [];
+            const normal = 'rgb(75, 192, 192)';
+            for (let i = 0; i < pts.length; i++) {
+                const p = pts[i];
+                const actual = pointActualY(p);
+                const clamped =
+                    yAxisFixedMax &&
+                    Number.isFinite(actual) &&
+                    actual > CHART_Y_AXIS_MAX_FIXED_MB;
+                if (clamped) {
+                    bg.push('rgba(0,0,0,0)');
+                    bdr.push('rgba(0,0,0,0)');
+                } else {
+                    const c = p && p.has_watch_ip ? USAGE_HIGHLIGHT_COLOR : normal;
+                    bg.push(c);
+                    bdr.push(c);
+                }
+            }
+            ds.pointBackgroundColor = bg;
+            ds.pointBorderColor = bdr;
+        }
+
         function syncChartYAxisScale() {
             const yScale = chart.options.scales.y;
             const usageDs = chart.data.datasets[0];
@@ -337,6 +365,7 @@
                 usageDs.clip = true;
                 quotaDs.clip = true;
             }
+            syncUsagePointMarkerStyles();
         }
 
         function updateYAxisToggleUi() {
@@ -677,11 +706,29 @@
                     borderColor: 'rgb(255, 99, 132)',
                     borderDash: [5, 5],
                     fill: false,
-                    pointRadius: 0
+                    pointRadius: 0,
+                    segment: {
+                        borderColor: (ctx) => {
+                            const cap = CHART_Y_AXIS_MAX_FIXED_MB;
+                            if (!yAxisFixedMax) {
+                                return 'rgb(255, 99, 132)';
+                            }
+                            const a0 = pointActualY(ctx.p0.raw);
+                            const a1 = pointActualY(ctx.p1.raw);
+                            if (
+                                Number.isFinite(a0) &&
+                                Number.isFinite(a1) &&
+                                a0 > cap &&
+                                a1 > cap
+                            ) {
+                                return 'rgba(255, 99, 132, 0)';
+                            }
+                            return 'rgb(255, 99, 132)';
+                        }
+                    }
                 }]
             },
             options: {
-                // Helps points/lines near chart edges; fixed Y still expands when usage > 1000 MB
                 clip: false,
                 responsive: true,
                 maintainAspectRatio: true,
@@ -847,12 +894,6 @@
                         has_watch_ip: !!d.has_watch_ip,
                         ip_snapshot: Array.isArray(d.ip_snapshot) ? d.ip_snapshot : []
                     }));
-                    chart.data.datasets[0].pointBackgroundColor = data.map(d =>
-                        d.has_watch_ip ? 'rgb(255, 159, 64)' : 'rgb(75, 192, 192)'
-                    );
-                    chart.data.datasets[0].pointBorderColor = data.map(d =>
-                        d.has_watch_ip ? 'rgb(255, 159, 64)' : 'rgb(75, 192, 192)'
-                    );
 
                     // Quota line: today's quota when known (matches y-axis); else fall back to per-point history
                     if (currentQuotaMb != null && Number.isFinite(currentQuotaMb)) {
