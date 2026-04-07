@@ -273,28 +273,57 @@
         /** Latest quota from /zimo-usage (quota line in chart; not used for Y-axis). */
         let lastCurrentQuotaMb = null;
 
+        /** True Y value for a point (usage or quota); prefers actual_mb after plot y is clamped. */
+        function pointActualY(p) {
+            if (!p || typeof p !== 'object') return NaN;
+            if (p.actual_mb != null && Number.isFinite(Number(p.actual_mb))) {
+                return Number(p.actual_mb);
+            }
+            return Number(p.y);
+        }
+
         function maxUsageYFromDataset(usageDs) {
             let maxY = 0;
             const pts = usageDs.data || [];
             for (let i = 0; i < pts.length; i++) {
-                const p = pts[i];
-                const y = p && typeof p === 'object' && 'y' in p ? Number(p.y) : Number(p);
-                if (Number.isFinite(y) && y > maxY) maxY = y;
+                const v = pointActualY(pts[i]);
+                if (Number.isFinite(v) && v > maxY) maxY = v;
             }
             return maxY;
+        }
+
+        /**
+         * Fixed Y max must stay 1000 MB, but Chart.js line controller omits segments outside the scale (#11899).
+         * Clamp plotted y to the cap while storing real values in actual_mb (tooltips show actual_mb).
+         */
+        function applyPlotYForAxisMode() {
+            if (!chart) return;
+            for (let di = 0; di <= 1; di++) {
+                const pts = chart.data.datasets[di].data || [];
+                for (let i = 0; i < pts.length; i++) {
+                    const p = pts[i];
+                    if (!p || typeof p !== 'object') continue;
+                    const actual = pointActualY(p);
+                    if (!Number.isFinite(actual)) continue;
+                    if (p.actual_mb == null || !Number.isFinite(Number(p.actual_mb))) {
+                        p.actual_mb = actual;
+                    }
+                    if (yAxisFixedMax) {
+                        p.y = Math.min(actual, CHART_Y_AXIS_MAX_FIXED_MB);
+                    } else {
+                        p.y = actual;
+                    }
+                }
+            }
         }
 
         function syncChartYAxisScale() {
             const yScale = chart.options.scales.y;
             const usageDs = chart.data.datasets[0];
             const quotaDs = chart.data.datasets[1];
+            applyPlotYForAxisMode();
             if (yAxisFixedMax) {
-                // Floor at 1000 MB, but never cap Y below actual usage: Chart.js 4.x line
-                // controller can drop segments outside scale even with dataset clip:false
-                // (see https://github.com/chartjs/Chart.js/issues/11899 ).
-                const maxY = maxUsageYFromDataset(usageDs);
-                const floor = CHART_Y_AXIS_MAX_FIXED_MB;
-                yScale.max = maxY > floor ? maxY * 1.08 : floor;
+                yScale.max = CHART_Y_AXIS_MAX_FIXED_MB;
                 usageDs.clip = false;
                 quotaDs.clip = false;
             } else {
@@ -317,10 +346,10 @@
             if (yAxisFixedMax) {
                 btn.textContent = `Y-axis: fixed (${CHART_Y_AXIS_MAX_FIXED_MB} MB)`;
                 btn.title =
-                    'Y-axis uses at least 1000 MB; expands if usage is higher. Click for flexible (usage-only) scale.';
+                    'Y-axis 0–1000 MB; usage over 1000 follows the top grid (see tooltip for true MB). Click for flexible scale.';
             } else {
                 btn.textContent = 'Y-axis: flexible (usage)';
-                btn.title = `Click for at-least-${CHART_Y_AXIS_MAX_FIXED_MB} MB Y-axis (expands if usage exceeds it)`;
+                btn.title = `Click for fixed 0–${CHART_Y_AXIS_MAX_FIXED_MB} MB Y-axis`;
             }
         }
 
@@ -410,10 +439,11 @@
             const t = new Date(d0.x);
             inner += `<div style="font-weight:600;margin-bottom:6px">${escapeHtmlAttr(t.toLocaleString())}</div>`;
             const usageDotColor = d0.has_watch_ip ? USAGE_HIGHLIGHT_COLOR : ds0.borderColor;
-            inner += `<div><span style="color:${usageDotColor}">●</span> ${escapeHtmlAttr(ds0.label)}: ${escapeHtmlAttr(String(d0.y))}</div>`;
+            const usageMb = pointActualY(d0);
+            inner += `<div><span style="color:${usageDotColor}">●</span> ${escapeHtmlAttr(ds0.label)}: ${escapeHtmlAttr(String(usageMb))}</div>`;
             const q = ds1.data[dataIndex];
-            if (q != null && q.y != null && Number.isFinite(Number(q.y))) {
-                inner += `<div><span style="color:${ds1.borderColor}">●</span> ${escapeHtmlAttr(ds1.label)}: ${escapeHtmlAttr(String(q.y))}</div>`;
+            if (q != null && Number.isFinite(pointActualY(q))) {
+                inner += `<div><span style="color:${ds1.borderColor}">●</span> ${escapeHtmlAttr(ds1.label)}: ${escapeHtmlAttr(String(pointActualY(q)))}</div>`;
             }
             inner += renderTooltipIpSectionHtml(getFilteredIpSnapshot(d0));
             return inner;
@@ -594,7 +624,12 @@
             items.forEach((item) => {
                 const color = tooltipUsageLegendColor(item);
                 const label = item.dataset.label || '';
-                inner += `<div><span style="color:${color}">●</span> ${escapeHtmlAttr(label)}: ${escapeHtmlAttr(String(item.formattedValue))}</div>`;
+                let valueStr = String(item.formattedValue);
+                const tr = item.raw || {};
+                if (tr.actual_mb != null && Number.isFinite(Number(tr.actual_mb))) {
+                    valueStr = String(tr.actual_mb);
+                }
+                inner += `<div><span style="color:${color}">●</span> ${escapeHtmlAttr(label)}: ${escapeHtmlAttr(valueStr)}</div>`;
             });
             inner += renderTooltipIpSectionHtml(filtered);
 
@@ -808,6 +843,7 @@
                     chart.data.datasets[0].data = data.map(d => ({
                         x: d.timestamp,
                         y: d.used_mb,
+                        actual_mb: d.used_mb,
                         has_watch_ip: !!d.has_watch_ip,
                         ip_snapshot: Array.isArray(d.ip_snapshot) ? d.ip_snapshot : []
                     }));
@@ -822,12 +858,14 @@
                     if (currentQuotaMb != null && Number.isFinite(currentQuotaMb)) {
                         chart.data.datasets[1].data = data.map(d => ({
                             x: d.timestamp,
-                            y: currentQuotaMb
+                            y: currentQuotaMb,
+                            actual_mb: currentQuotaMb
                         }));
                     } else if (data[0].quota_mb) {
                         chart.data.datasets[1].data = data.map(d => ({
                             x: d.timestamp,
-                            y: d.quota_mb
+                            y: d.quota_mb,
+                            actual_mb: d.quota_mb
                         }));
                     } else {
                         chart.data.datasets[1].data = [];
