@@ -289,7 +289,12 @@
             const usageDs = chart.data.datasets[0];
             const quotaDs = chart.data.datasets[1];
             if (yAxisFixedMax) {
-                yScale.max = CHART_Y_AXIS_MAX_FIXED_MB;
+                // Floor at 1000 MB, but never cap Y below actual usage: Chart.js 4.x line
+                // controller can drop segments outside scale even with dataset clip:false
+                // (see https://github.com/chartjs/Chart.js/issues/11899 ).
+                const maxY = maxUsageYFromDataset(usageDs);
+                const floor = CHART_Y_AXIS_MAX_FIXED_MB;
+                yScale.max = maxY > floor ? maxY * 1.08 : floor;
                 usageDs.clip = false;
                 quotaDs.clip = false;
             } else {
@@ -311,10 +316,11 @@
             btn.setAttribute('aria-pressed', yAxisFixedMax ? 'true' : 'false');
             if (yAxisFixedMax) {
                 btn.textContent = `Y-axis: fixed (${CHART_Y_AXIS_MAX_FIXED_MB} MB)`;
-                btn.title = 'Click for flexible scale (max from usage only; quota line may clip)';
+                btn.title =
+                    'Y-axis uses at least 1000 MB; expands if usage is higher. Click for flexible (usage-only) scale.';
             } else {
                 btn.textContent = 'Y-axis: flexible (usage)';
-                btn.title = `Click to fix Y-axis max at ${CHART_Y_AXIS_MAX_FIXED_MB} MB`;
+                btn.title = `Click for at-least-${CHART_Y_AXIS_MAX_FIXED_MB} MB Y-axis (expands if usage exceeds it)`;
             }
         }
 
@@ -640,6 +646,8 @@
                 }]
             },
             options: {
+                // Helps points/lines near chart edges; fixed Y still expands when usage > 1000 MB
+                clip: false,
                 responsive: true,
                 maintainAspectRatio: true,
                 interaction: {
