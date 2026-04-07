@@ -706,19 +706,30 @@
             start.setHours(0, 0, 0, 0);
             start.setDate(start.getDate() + offsetDays);
 
+            const dayEnd = new Date(start);
+            dayEnd.setHours(23, 59, 59, 999);
+
             let end;
             if (offsetDays === 0) {
                 end = new Date(now);
             } else {
-                end = new Date(start);
-                end.setHours(23, 59, 59, 999);
+                end = dayEnd;
             }
 
             return {
                 start: start.toISOString(),
                 end: end.toISOString(),
-                dayStart: start
+                dayStart: start,
+                dayEnd
             };
+        }
+
+        /** X-axis always spans the full local calendar day (24 h) for the viewed day. */
+        function syncChartXAxisRange(dayStart, dayEnd) {
+            if (!chart) return;
+            const x = chart.options.scales.x;
+            x.min = dayStart.getTime();
+            x.max = dayEnd.getTime();
         }
 
         function updateChartDayNavUi() {
@@ -754,7 +765,8 @@
         function updateChart() {
             updateChartDayNavUi();
 
-            const { start, end } = getViewDayBounds(viewDayOffset);
+            const { start, end, dayStart, dayEnd } = getViewDayBounds(viewDayOffset);
+            syncChartXAxisRange(dayStart, dayEnd);
             const limit = 1500;
             const historyUrl = `/zimo-usage/history?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}&iface=br-zimo&limit=${limit}`;
 
