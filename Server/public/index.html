@@ -231,6 +231,23 @@
             border-color: #b8c5d6;
             color: #333;
         }
+
+        .mem-chart-link {
+            position: fixed;
+            bottom: 18px;
+            right: 20px;
+            z-index: 15;
+            font-size: 14px;
+        }
+
+        .mem-chart-link a {
+            color: #1565c0;
+            text-decoration: none;
+        }
+
+        .mem-chart-link a:hover {
+            text-decoration: underline;
+        }
     </style>
 </head>
 <body>
@@ -253,6 +270,8 @@
             </div>
         </div>
     </div>
+
+    <div class="mem-chart-link"><a href="mem.html">Router memory</a></div>
 
     <script>
         let chart = null;
