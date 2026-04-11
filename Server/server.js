@@ -37,6 +37,16 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_timestamp ON usage_data(timestamp);
   CREATE INDEX IF NOT EXISTS idx_iface_timestamp ON usage_data(iface, timestamp);
 
+`);
+
+try {
+  db.exec(`ALTER TABLE usage_data ADD COLUMN meta_data TEXT`);
+} catch {
+  // column already exists
+}
+
+db.exec(`
+
   CREATE TABLE IF NOT EXISTS usage_ip_data (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     usage_id INTEGER NOT NULL,
@@ -59,8 +69,8 @@ db.exec(`
 
 // Prepare statement for inserts
 const insertStmt = db.prepare(`
-  INSERT INTO usage_data (timestamp, iface, used_kb, used_mb, quota_mb, quota_kb)
-  VALUES (?, ?, ?, ?, ?, ?)
+  INSERT INTO usage_data (timestamp, iface, used_kb, used_mb, quota_mb, quota_kb, meta_data)
+  VALUES (?, ?, ?, ?, ?, ?, ?)
 `);
 const insertIpStmt = db.prepare(`
   INSERT INTO usage_ip_data (usage_id, ip, cumulative_bytes)
@@ -90,7 +100,8 @@ const insertWithIpSnapshot = db.transaction((entry, ipSnapshot) => {
     entry.used_kb,
     entry.used_mb,
     entry.quota_mb,
-    entry.quota_kb
+    entry.quota_kb,
+    entry.meta_data
   );
 
   for (const row of ipSnapshot) {
@@ -227,21 +238,51 @@ app.use((req, res, next) => {
 });
 
 // POST endpoint: receive usage data from router
+function normalizeMetaDataInput(raw) {
+  if (raw == null || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  return raw;
+}
+
+function metaDataForDb(metaObj) {
+  if (metaObj == null) return null;
+  try {
+    return JSON.stringify(metaObj);
+  } catch {
+    return null;
+  }
+}
+
+function parseMetaDataColumn(value) {
+  if (value == null || value === '') return null;
+  if (typeof value === 'object') return value;
+  try {
+    return JSON.parse(String(value));
+  } catch {
+    return null;
+  }
+}
+
 app.post('/zimo-usage', async (req, res) => {
-  const { iface, used_kb, quota_mb, quota_kb, ip_snapshot } = req.body || {};
+  const { iface, used_kb, quota_mb, quota_kb, ip_snapshot, meta_data } = req.body || {};
   
   if (!iface || used_kb === undefined) {
     return res.status(400).json({ error: 'Missing iface or used_kb' });
   }
 
   const timestamp = new Date().toISOString();
+  const metaObj = normalizeMetaDataInput(meta_data);
   const entry = {
     timestamp,
     iface,
     used_kb: parseInt(used_kb, 10),
     used_mb: parseFloat((used_kb / 1024).toFixed(2)),
     quota_mb: quota_mb ? parseInt(quota_mb, 10) : null,
-    quota_kb: quota_kb ? parseInt(quota_kb, 10) : null
+    quota_kb: quota_kb ? parseInt(quota_kb, 10) : null,
+    meta_data: metaDataForDb(metaObj)
+  };
+  const entryForClient = {
+    ...entry,
+    meta_data: metaObj
   };
   const ipSnapshot = sanitizeIpSnapshot(ip_snapshot);
 
@@ -280,14 +321,14 @@ app.post('/zimo-usage', async (req, res) => {
   fs.appendFileSync(logFile, logLine);
 
   // Update latest usage JSON (for backward compatibility)
-  fs.writeFileSync(usageFile, JSON.stringify(entry, null, 2));
+  fs.writeFileSync(usageFile, JSON.stringify(entryForClient, null, 2));
 
   const quotaMsg = entry.quota_mb ? ` (quota: ${entry.quota_mb} MB)` : '';
   console.log(`Received usage: ${used_kb} KB (${entry.used_mb} MB) on ${iface}${quotaMsg}`);
   
   res.json({
     ok: true,
-    received: { ...entry, ip_snapshot: ipSnapshot },
+    received: { ...entryForClient, ip_snapshot: ipSnapshot },
     has_watch_ip: nowMatch,
     whatsapp_notified
   });
@@ -362,11 +403,15 @@ app.get('/zimo-usage/history', (req, res) => {
     const watchPatterns = listWatchIpsStmt.all().map((row) => row.ip);
 
     // Reverse so client gets chronological order (oldest first) for the chart
-    const data = rows.reverse().map((row) => ({
-      ...row,
-      ip_snapshot: ipByUsageId.get(row.id) || [],
-      has_watch_ip: snapshotHasWatchMatch(ipByUsageId.get(row.id) || [], watchPatterns)
-    }));
+    const data = rows.reverse().map((row) => {
+      const { meta_data: metaCol, ...rest } = row;
+      return {
+        ...rest,
+        meta_data: parseMetaDataColumn(metaCol),
+        ip_snapshot: ipByUsageId.get(row.id) || [],
+        has_watch_ip: snapshotHasWatchMatch(ipByUsageId.get(row.id) || [], watchPatterns)
+      };
+    });
     res.json({ data });
   } catch (err) {
     console.error('Database query error:', err);

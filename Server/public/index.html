@@ -273,6 +273,19 @@
         /** Latest quota from /zimo-usage (quota line in chart; not used for Y-axis). */
         let lastCurrentQuotaMb = null;
 
+        const MEM_LINE_COLOR = 'rgb(153, 102, 255)';
+
+        /** Prefer available_kb; fall back to free_kb. Returns MB or null. */
+        function memAvailableMbFromMeta(meta) {
+            const m = meta && meta.mem;
+            if (!m || typeof m !== 'object') return null;
+            const raw =
+                m.available_kb != null ? m.available_kb : m.free_kb != null ? m.free_kb : null;
+            const kb = Number(raw);
+            if (!Number.isFinite(kb)) return null;
+            return kb / 1024;
+        }
+
         /** True Y value for a point (usage or quota); prefers actual_mb after plot y is clamped. */
         function pointActualY(p) {
             if (!p || typeof p !== 'object') return NaN;
@@ -390,6 +403,7 @@
         }
 
         function tooltipUsageLegendColor(item) {
+            if (item.datasetIndex === 2) return MEM_LINE_COLOR;
             if (item.datasetIndex !== 0) return item.dataset.borderColor || '#666';
             const raw = item.raw;
             if (raw && raw.has_watch_ip) return USAGE_HIGHLIGHT_COLOR;
@@ -473,6 +487,11 @@
             const q = ds1.data[dataIndex];
             if (q != null && Number.isFinite(pointActualY(q))) {
                 inner += `<div><span style="color:${ds1.borderColor}">●</span> ${escapeHtmlAttr(ds1.label)}: ${escapeHtmlAttr(String(pointActualY(q)))}</div>`;
+            }
+            const ds2 = chart.data.datasets[2];
+            const memPt = ds2 && ds2.data[dataIndex];
+            if (memPt != null && Number.isFinite(memPt.y)) {
+                inner += `<div><span style="color:${MEM_LINE_COLOR}">●</span> ${escapeHtmlAttr(ds2.label)}: ${escapeHtmlAttr(String(memPt.y.toFixed(2)))}</div>`;
             }
             inner += renderTooltipIpSectionHtml(getFilteredIpSnapshot(d0));
             return inner;
@@ -651,12 +670,17 @@
                 inner += `<div style="font-weight:600;margin-bottom:6px">${escapeHtmlAttr(t.toLocaleString())}</div>`;
             }
             items.forEach((item) => {
+                const tr = item.raw;
+                if (item.datasetIndex === 2) {
+                    if (tr == null || typeof tr !== 'object' || !Number.isFinite(tr.y)) return;
+                }
                 const color = tooltipUsageLegendColor(item);
                 const label = item.dataset.label || '';
                 let valueStr = String(item.formattedValue);
-                const tr = item.raw || {};
-                if (tr.actual_mb != null && Number.isFinite(Number(tr.actual_mb))) {
+                if (tr && tr.actual_mb != null && Number.isFinite(Number(tr.actual_mb))) {
                     valueStr = String(tr.actual_mb);
+                } else if (item.datasetIndex === 2 && tr && Number.isFinite(tr.y)) {
+                    valueStr = tr.y.toFixed(2);
                 }
                 inner += `<div><span style="color:${color}">●</span> ${escapeHtmlAttr(label)}: ${escapeHtmlAttr(valueStr)}</div>`;
             });
@@ -691,6 +715,7 @@
             data: {
                 datasets: [{
                     label: 'Usage (MB)',
+                    yAxisID: 'y',
                     data: [],
                     borderColor: 'rgb(75, 192, 192)',
                     backgroundColor: 'rgba(75, 192, 192, 0.2)',
@@ -703,6 +728,7 @@
                 }, {
                     label: 'Quota (MB)',
                     data: [],
+                    yAxisID: 'y',
                     borderColor: 'rgb(255, 99, 132)',
                     borderDash: [5, 5],
                     fill: false,
@@ -726,6 +752,16 @@
                             return 'rgb(255, 99, 132)';
                         }
                     }
+                }, {
+                    label: 'Mem available (MB)',
+                    data: [],
+                    yAxisID: 'y1',
+                    borderColor: MEM_LINE_COLOR,
+                    backgroundColor: 'rgba(153, 102, 255, 0.12)',
+                    tension: 0.1,
+                    fill: false,
+                    pointRadius: 2,
+                    pointHitRadius: 10
                 }]
             },
             options: {
@@ -764,6 +800,17 @@
                         title: {
                             display: true,
                             text: 'Usage (MB)'
+                        }
+                    },
+                    y1: {
+                        position: 'right',
+                        beginAtZero: true,
+                        title: {
+                            display: true,
+                            text: 'Router RAM avail. (MB)'
+                        },
+                        grid: {
+                            drawOnChartArea: false
                         }
                     }
                 },
@@ -881,6 +928,7 @@
                         chart.data.datasets[0].pointBackgroundColor = [];
                         chart.data.datasets[0].pointBorderColor = [];
                         chart.data.datasets[1].data = [];
+                        chart.data.datasets[2].data = [];
                         syncChartYAxisScale();
                         chart.update('none');
                         return;
@@ -911,6 +959,12 @@
                     } else {
                         chart.data.datasets[1].data = [];
                     }
+
+                    chart.data.datasets[2].data = data.map((d) => {
+                        const mb = memAvailableMbFromMeta(d.meta_data);
+                        if (mb == null) return null;
+                        return { x: d.timestamp, y: mb };
+                    });
 
                     syncChartYAxisScale();
 
