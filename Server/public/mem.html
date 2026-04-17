@@ -97,7 +97,7 @@
     <div class="container">
         <div class="nav-row"><a href="/">← Zimo usage</a></div>
         <h1>Router memory</h1>
-        <p class="sub">Stacked view from <code>/proc/meminfo</code> in <code>meta_data.mem</code> (pushed by the router). Bottom is <code>MemAvailable</code>; upper layers take from <code>MemTotal − MemAvailable</code> in order: cached+buffers, slab, shmem, anon, remainder. Dashed line is <code>MemTotal</code>. Interface <code>br-zimo</code>.</p>
+        <p class="sub">Stacked view from <code>/proc/meminfo</code> in <code>meta_data.mem</code> (pushed by the router). Bottom: attributed “used” from <code>MemTotal − MemAvailable</code> (cached+buffers, slab, shmem, anon). Middle: unknown remainder. Top: <code>MemAvailable</code>. Dashed line: <code>MemTotal</code>. Interface <code>br-zimo</code>.</p>
 
         <div class="chart-container">
             <div class="chart-day-nav" role="group" aria-label="Day navigation">
@@ -343,12 +343,12 @@
                     }
 
                     const ds = memChart.data.datasets;
-                    ds[0].data = series.avail;
-                    ds[1].data = series.cached;
-                    ds[2].data = series.slab;
-                    ds[3].data = series.shmem;
-                    ds[4].data = series.anon;
-                    ds[5].data = series.other;
+                    ds[0].data = series.cached;
+                    ds[1].data = series.slab;
+                    ds[2].data = series.shmem;
+                    ds[3].data = series.anon;
+                    ds[4].data = series.other;
+                    ds[5].data = series.avail;
                     ds[6].data = series.totalLine;
 
                     const yCap = Math.max(64, series.ymaxMb * 1.08);
@@ -390,21 +390,11 @@
                 datasets: [
                     {
                         ...memLineOpts,
-                        label: 'MemAvailable',
-                        data: [],
-                        stack: MEM_STACK,
-                        fill: true,
-                        order: 1,
-                        borderColor: 'rgb(46, 125, 50)',
-                        backgroundColor: 'rgba(46, 125, 50, 0.28)'
-                    },
-                    {
-                        ...memLineOpts,
                         label: 'Cached + buffers',
                         data: [],
                         stack: MEM_STACK,
                         fill: true,
-                        order: 2,
+                        order: 1,
                         borderColor: 'rgb(25, 118, 210)',
                         backgroundColor: 'rgba(25, 118, 210, 0.35)'
                     },
@@ -414,7 +404,7 @@
                         data: [],
                         stack: MEM_STACK,
                         fill: true,
-                        order: 3,
+                        order: 2,
                         borderColor: 'rgb(245, 124, 0)',
                         backgroundColor: 'rgba(245, 124, 0, 0.35)'
                     },
@@ -424,7 +414,7 @@
                         data: [],
                         stack: MEM_STACK,
                         fill: true,
-                        order: 4,
+                        order: 3,
                         borderColor: 'rgb(123, 31, 162)',
                         backgroundColor: 'rgba(123, 31, 162, 0.32)'
                     },
@@ -434,19 +424,29 @@
                         data: [],
                         stack: MEM_STACK,
                         fill: true,
-                        order: 5,
+                        order: 4,
                         borderColor: 'rgb(198, 40, 40)',
                         backgroundColor: 'rgba(198, 40, 40, 0.28)'
                     },
                     {
                         ...memLineOpts,
-                        label: 'Other (remainder)',
+                        label: 'Unknown (remainder)',
+                        data: [],
+                        stack: MEM_STACK,
+                        fill: true,
+                        order: 5,
+                        borderColor: 'rgb(97, 97, 97)',
+                        backgroundColor: 'rgba(97, 97, 97, 0.35)'
+                    },
+                    {
+                        ...memLineOpts,
+                        label: 'MemAvailable',
                         data: [],
                         stack: MEM_STACK,
                         fill: true,
                         order: 6,
-                        borderColor: 'rgb(97, 97, 97)',
-                        backgroundColor: 'rgba(97, 97, 97, 0.35)'
+                        borderColor: 'rgb(46, 125, 50)',
+                        backgroundColor: 'rgba(46, 125, 50, 0.28)'
                     },
                     {
                         label: 'MemTotal (reference)',
