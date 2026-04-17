@@ -8,6 +8,7 @@
 #                       Unix line breaks (no literal \n text). No quotes.
 #
 # Host keys: populated each run via ssh-keyscan (no SSH_KNOWN_HOSTS secret).
+# Before ssh-keyscan, the workflow logs getent/dig for SSH_HOST (secret) so DNS matches the deploy target.
 #
 # Optional:
 #   SSH_PORT          — default 22
@@ -75,6 +76,21 @@ jobs:
             echo "changed=false" >> "$GITHUB_OUTPUT"
             echo "reason=manifest-unchanged" >> "$GITHUB_OUTPUT"
           fi
+
+      - name: Resolve SSH host (DNS diagnostic)
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+        run: |
+          set -u
+          echo "::group::DNS resolution for SSH_HOST"
+          echo "SSH_HOST=${SSH_HOST}"
+          getent ahostsv4 "${SSH_HOST}" || echo "getent ahostsv4: no records or lookup failed"
+          if command -v dig >/dev/null 2>&1; then
+            dig +short "${SSH_HOST}" A || true
+          else
+            echo "dig not available on runner (optional); getent above is enough for libc resolution."
+          fi
+          echo "::endgroup::"
 
       - name: Add server host keys
         env:
