@@ -28,12 +28,7 @@
             font-size: 26px;
             font-weight: 600;
             color: #222;
-            margin-bottom: 8px;
-        }
-        .sub {
-            font-size: 14px;
-            color: #666;
-            margin-bottom: 28px;
+            margin-bottom: 24px;
         }
         .chart-container {
             background: #fff;
@@ -97,7 +92,6 @@
     <div class="container">
         <div class="nav-row"><a href="/">← Zimo usage</a></div>
         <h1>Router memory</h1>
-        <p class="sub">Stacked view from full <code>/proc/meminfo</code> (router <code>push_quota.sh</code>) stored in <code>meta_data.mem</code> / <code>meminfo_json</code>. Bottom: attributed “used” from <code>MemTotal − MemAvailable</code> (cached+buffers, slab, shmem, anon). Middle: unknown remainder. Top: <code>MemAvailable</code>. Dashed line: <code>MemTotal</code>. Interface <code>br-zimo</code>. Redeploy the OpenWrt script if samples still look like old <code>free</code> output.</p>
 
         <div class="chart-container">
             <div class="chart-day-nav" role="group" aria-label="Day navigation">
