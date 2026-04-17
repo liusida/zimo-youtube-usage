@@ -1,6 +1,11 @@
 # Daily reset at midnight
 0 0 * * * /root/youtube/reset_quota.sh
 
-# Check quota and push usage every 3 minutes
-*/3 * * * * /root/youtube/check_quota.sh
-*/3 * * * * /root/youtube/push_quota.sh
+# Check quota every 10 minutes
+*/15 * * * * /root/youtube/check_quota.sh
+
+# Push usage to server every 5 minutes
+*/15 * * * * /root/youtube/push_quota.sh
+
+# Restart Wifi Every 4:00 A.M.
+0 4 * * * /usr/bin/wifi-restart

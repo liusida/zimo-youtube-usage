@@ -97,7 +97,7 @@
     <div class="container">
         <div class="nav-row"><a href="/">← Zimo usage</a></div>
         <h1>Router memory</h1>
-        <p class="sub">Available RAM from <code>meta_data.mem</code>; dashed line is total RAM (<code>total_kb</code>). Interface <code>br-zimo</code>.</p>
+        <p class="sub">Stacked view from <code>/proc/meminfo</code> in <code>meta_data.mem</code> (pushed by the router). Bottom is <code>MemAvailable</code>; upper layers take from <code>MemTotal − MemAvailable</code> in order: cached+buffers, slab, shmem, anon, remainder. Dashed line is <code>MemTotal</code>. Interface <code>br-zimo</code>.</p>
 
         <div class="chart-container">
             <div class="chart-day-nav" role="group" aria-label="Day navigation">
@@ -106,7 +106,7 @@
                 <button type="button" id="mem-btn-next" onclick="goMemDayRelative(1)" disabled>Next</button>
                 <button type="button" id="mem-btn-today" class="active" onclick="goMemDay(0)">Today</button>
             </div>
-            <div style="position:relative;height:min(420px,70vh);">
+            <div style="position:relative;height:min(480px,75vh);">
                 <canvas id="memChart"></canvas>
             </div>
             <p class="mem-status" id="mem-status" aria-live="polite"></p>
@@ -114,8 +114,7 @@
     </div>
 
     <script>
-        /** Fixed Y-axis for memory chart (MB); not derived from samples. */
-        const MEM_CHART_Y_MAX_MB = 450;
+        const MEM_STACK = 'mem';
 
         let memChart = null;
         let memViewDayOffset = 0;
@@ -134,10 +133,71 @@
             return null;
         }
 
-        /** Milliseconds since epoch; required for reliable time-scale rendering. */
         function parseTimestampMs(ts) {
             const n = new Date(ts).getTime();
             return Number.isFinite(n) ? n : NaN;
+        }
+
+        /**
+         * Read first available meminfo key (KiB). Accepts new /proc/meminfo names and legacy `free`-style keys.
+         * @param {Record<string, unknown>} mem
+         * @param {string[]} keys
+         */
+        function kbFromMem(mem, keys) {
+            if (!mem || typeof mem !== 'object') return null;
+            for (const k of keys) {
+                if (Object.prototype.hasOwnProperty.call(mem, k) && mem[k] != null) {
+                    const n = Number(mem[k]);
+                    if (Number.isFinite(n)) return n;
+                }
+            }
+            return null;
+        }
+
+        /**
+         * Waterfall MemTotal − MemAvailable into layers (KiB) for stacking.
+         * @returns {null | { mt: number, mav: number, cachedBuf: number, slab: number, shmem: number, anon: number, other: number }}
+         */
+        function pressureLayersKb(mem) {
+            const mt = kbFromMem(mem, ['mem_total_kb', 'total_kb']);
+            const mav = kbFromMem(mem, ['mem_available_kb', 'available_kb']);
+            if (mt == null || mav == null) return null;
+            const pressure = Math.max(0, mt - mav);
+
+            const cachedPart =
+                (kbFromMem(mem, ['cached_kb']) || 0) +
+                (kbFromMem(mem, ['buffers_kb']) || 0);
+            const buffCacheLegacy = kbFromMem(mem, ['buff_cache_kb']) || 0;
+            const cachedBuf = cachedPart > 0 || buffCacheLegacy === 0 ? cachedPart : buffCacheLegacy;
+
+            const slab = kbFromMem(mem, ['slab_kb']) || 0;
+            const shmem = kbFromMem(mem, ['shmem_kb']) || 0;
+            const anon = kbFromMem(mem, ['anonpages_kb']) || 0;
+
+            let rem = pressure;
+            /** @param {number} cap */
+            function take(cap) {
+                const c = Math.max(0, cap);
+                const u = Math.min(c, rem);
+                rem -= u;
+                return u;
+            }
+
+            const lCached = take(cachedBuf);
+            const lSlab = take(slab);
+            const lShmem = take(shmem);
+            const lAnon = take(anon);
+            const lOther = rem;
+
+            return {
+                mt,
+                mav,
+                cachedBuf: lCached,
+                slab: lSlab,
+                shmem: lShmem,
+                anon: lAnon,
+                other: lOther
+            };
         }
 
         function kbToMbPoint(xMs, kbRaw) {
@@ -218,62 +278,86 @@
             const limit = 5000;
             const url = `/zimo-usage/history?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}&iface=br-zimo&limit=${limit}`;
             const statusEl = document.getElementById('mem-status');
+            const x0 = dayStart.getTime();
+            const x1 = dayEnd.getTime();
 
             fetch(url)
                 .then((res) => res.json())
                 .then((result) => {
                     const data = result.data || [];
-                    const availPts = [];
-                    let totalKb = null;
+                    const series = {
+                        avail: [],
+                        cached: [],
+                        slab: [],
+                        shmem: [],
+                        anon: [],
+                        other: [],
+                        totalLine: [],
+                        ymaxMb: 0
+                    };
 
                     for (const d of data) {
                         const root = coerceMetaData(d.meta_data);
                         const mem = root && root.mem;
-                        if (mem && typeof mem === 'object') {
-                            if (totalKb == null && mem.total_kb != null) {
-                                const tk = Number(mem.total_kb);
-                                if (Number.isFinite(tk) && tk > 0) {
-                                    totalKb = tk;
-                                }
-                            }
+                        if (!mem || typeof mem !== 'object') continue;
 
-                            const xMs = parseTimestampMs(d.timestamp);
-                            const availKb =
-                                mem.available_kb != null
-                                    ? mem.available_kb
-                                    : mem.free_kb != null
-                                      ? mem.free_kb
-                                      : null;
-                            const pt = kbToMbPoint(xMs, availKb);
-                            if (pt) {
-                                availPts.push(pt);
-                            }
+                        const layers = pressureLayersKb(mem);
+                        if (!layers) continue;
+
+                        const xMs = parseTimestampMs(d.timestamp);
+                        if (!Number.isFinite(xMs)) continue;
+
+                        const totalMb = layers.mt / 1024;
+                        series.ymaxMb = Math.max(series.ymaxMb, totalMb);
+
+                        const a = kbToMbPoint(xMs, layers.mav);
+                        const c = kbToMbPoint(xMs, layers.cachedBuf);
+                        const s = kbToMbPoint(xMs, layers.slab);
+                        const h = kbToMbPoint(xMs, layers.shmem);
+                        const n = kbToMbPoint(xMs, layers.anon);
+                        const o = kbToMbPoint(xMs, layers.other);
+                        if (a && c && s && h && n && o) {
+                            series.avail.push(a);
+                            series.cached.push(c);
+                            series.slab.push(s);
+                            series.shmem.push(h);
+                            series.anon.push(n);
+                            series.other.push(o);
                         }
                     }
 
-                    availPts.sort((a, b) => a.x - b.x);
-                    memChart.data.datasets[0].data = availPts;
+                    const sortByX = (pts) => pts.sort((a, b) => a.x - b.x);
+                    sortByX(series.avail);
+                    sortByX(series.cached);
+                    sortByX(series.slab);
+                    sortByX(series.shmem);
+                    sortByX(series.anon);
+                    sortByX(series.other);
 
-                    const x0 = dayStart.getTime();
-                    const x1 = dayEnd.getTime();
-                    if (totalKb != null) {
-                        const totalMb = totalKb / 1024;
-                        memChart.data.datasets[1].data = [
-                            { x: x0, y: totalMb },
-                            { x: x1, y: totalMb }
+                    const totalMbForLine = series.ymaxMb > 0 ? series.ymaxMb : null;
+                    if (totalMbForLine != null) {
+                        series.totalLine = [
+                            { x: x0, y: totalMbForLine },
+                            { x: x1, y: totalMbForLine }
                         ];
-                    } else {
-                        memChart.data.datasets[1].data = [];
                     }
 
-                    const hasAvail = availPts.length > 0;
-                    if (!hasAvail && totalKb == null) {
+                    const ds = memChart.data.datasets;
+                    ds[0].data = series.avail;
+                    ds[1].data = series.cached;
+                    ds[2].data = series.slab;
+                    ds[3].data = series.shmem;
+                    ds[4].data = series.anon;
+                    ds[5].data = series.other;
+                    ds[6].data = series.totalLine;
+
+                    const yCap = Math.max(64, series.ymaxMb * 1.08);
+                    memChart.options.scales.y.max = yCap;
+
+                    const hasStack = series.avail.length > 0;
+                    if (!hasStack && totalMbForLine == null) {
                         statusEl.textContent =
-                            'No memory samples in this range (router must push meta_data.mem).';
-                        statusEl.classList.add('warn');
-                    } else if (!hasAvail && totalKb != null) {
-                        statusEl.textContent =
-                            'No available RAM in range; dashed line shows total from meta.';
+                            'No memory samples in this range (router must push meta_data.mem from /proc/meminfo).';
                         statusEl.classList.add('warn');
                     } else {
                         statusEl.textContent = '';
@@ -289,35 +373,95 @@
                 });
         }
 
+        const memLineOpts = {
+            type: 'line',
+            tension: 0.15,
+            spanGaps: true,
+            pointRadius: 0,
+            pointHitRadius: 8,
+            borderWidth: 1,
+            clip: false
+        };
+
         const ctx = document.getElementById('memChart').getContext('2d');
         memChart = new Chart(ctx, {
             type: 'line',
             data: {
                 datasets: [
                     {
-                        label: 'Available (MB)',
+                        ...memLineOpts,
+                        label: 'MemAvailable',
                         data: [],
+                        stack: MEM_STACK,
+                        fill: true,
                         order: 1,
-                        borderColor: 'rgb(123, 31, 162)',
-                        backgroundColor: 'rgba(123, 31, 162, 0.08)',
-                        tension: 0.15,
-                        spanGaps: true,
-                        pointRadius: 3,
-                        pointHitRadius: 10,
-                        clip: false
+                        borderColor: 'rgb(46, 125, 50)',
+                        backgroundColor: 'rgba(46, 125, 50, 0.28)'
                     },
                     {
-                        label: 'Total RAM (MB)',
+                        ...memLineOpts,
+                        label: 'Cached + buffers',
                         data: [],
-                        order: 0,
-                        borderColor: 'rgba(90, 90, 90, 0.9)',
-                        backgroundColor: 'transparent',
-                        borderWidth: 1.5,
-                        borderDash: [7, 5],
+                        stack: MEM_STACK,
+                        fill: true,
+                        order: 2,
+                        borderColor: 'rgb(25, 118, 210)',
+                        backgroundColor: 'rgba(25, 118, 210, 0.35)'
+                    },
+                    {
+                        ...memLineOpts,
+                        label: 'Slab',
+                        data: [],
+                        stack: MEM_STACK,
+                        fill: true,
+                        order: 3,
+                        borderColor: 'rgb(245, 124, 0)',
+                        backgroundColor: 'rgba(245, 124, 0, 0.35)'
+                    },
+                    {
+                        ...memLineOpts,
+                        label: 'Shmem',
+                        data: [],
+                        stack: MEM_STACK,
+                        fill: true,
+                        order: 4,
+                        borderColor: 'rgb(123, 31, 162)',
+                        backgroundColor: 'rgba(123, 31, 162, 0.32)'
+                    },
+                    {
+                        ...memLineOpts,
+                        label: 'AnonPages',
+                        data: [],
+                        stack: MEM_STACK,
+                        fill: true,
+                        order: 5,
+                        borderColor: 'rgb(198, 40, 40)',
+                        backgroundColor: 'rgba(198, 40, 40, 0.28)'
+                    },
+                    {
+                        ...memLineOpts,
+                        label: 'Other (remainder)',
+                        data: [],
+                        stack: MEM_STACK,
+                        fill: true,
+                        order: 6,
+                        borderColor: 'rgb(97, 97, 97)',
+                        backgroundColor: 'rgba(97, 97, 97, 0.35)'
+                    },
+                    {
+                        label: 'MemTotal (reference)',
+                        type: 'line',
+                        data: [],
                         fill: false,
+                        order: 10,
+                        borderColor: 'rgba(50, 50, 50, 0.92)',
+                        backgroundColor: 'transparent',
+                        borderWidth: 1.8,
+                        borderDash: [8, 6],
                         tension: 0,
                         pointRadius: 0,
-                        pointHitRadius: 0
+                        pointHitRadius: 0,
+                        spanGaps: true
                     }
                 ]
             },
@@ -328,14 +472,16 @@
                 scales: {
                     x: {
                         type: 'time',
+                        stacked: false,
                         time: {
                             displayFormats: { hour: 'HH:mm', day: 'MMM dd' }
                         },
                         title: { display: true, text: 'Time' }
                     },
                     y: {
+                        stacked: true,
                         min: 0,
-                        max: MEM_CHART_Y_MAX_MB,
+                        max: 450,
                         title: { display: true, text: 'Memory (MB)' }
                     }
                 },
@@ -344,14 +490,29 @@
                     tooltip: {
                         mode: 'index',
                         intersect: false,
-                        filter(item) {
-                            return item.datasetIndex === 0;
-                        },
                         callbacks: {
                             label(ctx) {
                                 const v = ctx.parsed.y;
                                 if (v == null || !Number.isFinite(v)) return `${ctx.dataset.label}: —`;
-                                return `${ctx.dataset.label}: ${v.toFixed(2)}`;
+                                return `${ctx.dataset.label}: ${v.toFixed(2)} MB`;
+                            },
+                            footer(items) {
+                                if (!items.length) return '';
+                                let sum = 0;
+                                for (const it of items) {
+                                    if (it.datasetIndex >= 0 && it.datasetIndex <= 5) {
+                                        const v = it.parsed.y;
+                                        if (v != null && Number.isFinite(v)) sum += v;
+                                    }
+                                }
+                                const tot = items.find((i) => i.datasetIndex === 6);
+                                const totV = tot && tot.parsed.y != null && Number.isFinite(tot.parsed.y)
+                                    ? tot.parsed.y
+                                    : null;
+                                const lines = [];
+                                if (sum > 0) lines.push(`Stack sum: ${sum.toFixed(2)} MB`);
+                                if (totV != null) lines.push(`MemTotal line: ${totV.toFixed(2)} MB`);
+                                return lines.join('\n');
                             }
                         }
                     }
