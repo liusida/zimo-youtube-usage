@@ -97,7 +97,7 @@
     <div class="container">
         <div class="nav-row"><a href="/">← Zimo usage</a></div>
         <h1>Router memory</h1>
-        <p class="sub">Stacked view from <code>/proc/meminfo</code> in <code>meta_data.mem</code> (pushed by the router). Bottom: attributed “used” from <code>MemTotal − MemAvailable</code> (cached+buffers, slab, shmem, anon). Middle: unknown remainder. Top: <code>MemAvailable</code>. Dashed line: <code>MemTotal</code>. Interface <code>br-zimo</code>.</p>
+        <p class="sub">Stacked view from full <code>/proc/meminfo</code> (router <code>push_quota.sh</code>) stored in <code>meta_data.mem</code> / <code>meminfo_json</code>. Bottom: attributed “used” from <code>MemTotal − MemAvailable</code> (cached+buffers, slab, shmem, anon). Middle: unknown remainder. Top: <code>MemAvailable</code>. Dashed line: <code>MemTotal</code>. Interface <code>br-zimo</code>. Redeploy the OpenWrt script if samples still look like old <code>free</code> output.</p>
 
         <div class="chart-container">
             <div class="chart-day-nav" role="group" aria-label="Day navigation">
@@ -131,6 +131,31 @@
                 }
             }
             return null;
+        }
+
+        /** Prefer meta_data.mem; fall back to meminfo_json column (full /proc/meminfo snapshot). */
+        function getMemSnapshot(row) {
+            const root = coerceMetaData(row.meta_data);
+            if (root && root.mem && typeof root.mem === 'object' && !Array.isArray(root.mem)) {
+                return root.mem;
+            }
+            const mj = row.meminfo_json;
+            if (typeof mj === 'string' && mj.length > 0) {
+                try {
+                    const o = JSON.parse(mj);
+                    return typeof o === 'object' && o !== null && !Array.isArray(o) ? o : null;
+                } catch {
+                    return null;
+                }
+            }
+            return null;
+        }
+
+        function isLegacyFreeMem(mem) {
+            if (!mem || typeof mem !== 'object') return false;
+            const hasProc = Object.prototype.hasOwnProperty.call(mem, 'mem_total_kb');
+            const hasFree = Object.prototype.hasOwnProperty.call(mem, 'total_kb');
+            return hasFree && !hasProc;
         }
 
         function parseTimestampMs(ts) {
@@ -295,11 +320,12 @@
                         totalLine: [],
                         ymaxMb: 0
                     };
+                    let sawLegacyMem = false;
 
                     for (const d of data) {
-                        const root = coerceMetaData(d.meta_data);
-                        const mem = root && root.mem;
+                        const mem = getMemSnapshot(d);
                         if (!mem || typeof mem !== 'object') continue;
+                        if (isLegacyFreeMem(mem)) sawLegacyMem = true;
 
                         const layers = pressureLayersKb(mem);
                         if (!layers) continue;
@@ -357,11 +383,14 @@
                     const hasStack = series.avail.length > 0;
                     if (!hasStack && totalMbForLine == null) {
                         statusEl.textContent =
-                            'No memory samples in this range (router must push meta_data.mem from /proc/meminfo).';
+                            'No memory samples in this range (router must push meta_data.mem or meminfo_json from /proc/meminfo).';
                         statusEl.classList.add('warn');
                     } else {
-                        statusEl.textContent = '';
-                        statusEl.classList.remove('warn');
+                        statusEl.textContent = sawLegacyMem
+                            ? 'Some samples use legacy `free`-style memory fields; update `push_quota.sh` on OpenWrt for full /proc/meminfo (mem_total_kb, slab_kb, …).'
+                            : '';
+                        if (sawLegacyMem) statusEl.classList.add('warn');
+                        else statusEl.classList.remove('warn');
                     }
 
                     memChart.update('none');

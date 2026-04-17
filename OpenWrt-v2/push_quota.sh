@@ -66,10 +66,12 @@ if [ -r /proc/meminfo ]; then
         MEM_OBJ="{${MEM_OBJ}}"
     fi
 fi
+# meta_data.mem = full /proc/meminfo map (KiB, snake_case *_kb). mem_schema marks format for the server/UI.
 if [ -n "$MEM_OBJ" ]; then
-    META_BODY="{\"mem\":$MEM_OBJ}"
+    META_BODY="{\"mem\":$MEM_OBJ,\"mem_schema\":\"proc_meminfo_v1\"}"
 else
     META_BODY="{}"
+    logger -t youtube_quota "No memory snapshot (/proc/meminfo missing or empty)"
 fi
 
 if curl -s -X POST "$SERVER_URL" \

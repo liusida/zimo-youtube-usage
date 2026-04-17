@@ -44,6 +44,11 @@ try {
 } catch {
   // column already exists
 }
+try {
+  db.exec(`ALTER TABLE usage_data ADD COLUMN meminfo_json TEXT`);
+} catch {
+  // column already exists
+}
 
 db.exec(`
 
@@ -69,8 +74,8 @@ db.exec(`
 
 // Prepare statement for inserts
 const insertStmt = db.prepare(`
-  INSERT INTO usage_data (timestamp, iface, used_kb, used_mb, quota_mb, quota_kb, meta_data)
-  VALUES (?, ?, ?, ?, ?, ?, ?)
+  INSERT INTO usage_data (timestamp, iface, used_kb, used_mb, quota_mb, quota_kb, meta_data, meminfo_json)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 `);
 const insertIpStmt = db.prepare(`
   INSERT INTO usage_ip_data (usage_id, ip, cumulative_bytes)
@@ -101,7 +106,8 @@ const insertWithIpSnapshot = db.transaction((entry, ipSnapshot) => {
     entry.used_mb,
     entry.quota_mb,
     entry.quota_kb,
-    entry.meta_data
+    entry.meta_data,
+    entry.meminfo_json
   );
 
   for (const row of ipSnapshot) {
@@ -243,6 +249,38 @@ function normalizeMetaDataInput(raw) {
   return raw;
 }
 
+/**
+ * Merge optional meminfo + mem so meta_data.mem always carries the full snapshot when provided.
+ * Router sends { mem, mem_schema }; older clients sent only legacy mem from `free`.
+ */
+function normalizeMetaDataForStorage(raw) {
+  const o = normalizeMetaDataInput(raw);
+  if (o == null) return null;
+  const meminfo =
+    o.meminfo != null && typeof o.meminfo === 'object' && !Array.isArray(o.meminfo)
+      ? o.meminfo
+      : null;
+  const mem =
+    o.mem != null && typeof o.mem === 'object' && !Array.isArray(o.mem) ? o.mem : null;
+  if (meminfo && !mem) {
+    return { ...o, mem: meminfo };
+  }
+  if (meminfo && mem) {
+    return { ...o, mem: { ...meminfo, ...mem } };
+  }
+  return o;
+}
+
+/** Full /proc/meminfo map as JSON for easy SQL inspection (duplicate of meta_data.mem when present). */
+function meminfoJsonForDb(metaObj) {
+  if (metaObj == null || metaObj.mem == null || typeof metaObj.mem !== 'object') return null;
+  try {
+    return JSON.stringify(metaObj.mem);
+  } catch {
+    return null;
+  }
+}
+
 function metaDataForDb(metaObj) {
   if (metaObj == null) return null;
   try {
@@ -270,7 +308,9 @@ app.post('/zimo-usage', async (req, res) => {
   }
 
   const timestamp = new Date().toISOString();
-  const metaObj = normalizeMetaDataInput(meta_data);
+  const metaObj = normalizeMetaDataForStorage(meta_data);
+  const metaStr = metaDataForDb(metaObj);
+  const meminfoJson = meminfoJsonForDb(metaObj);
   const entry = {
     timestamp,
     iface,
@@ -278,7 +318,8 @@ app.post('/zimo-usage', async (req, res) => {
     used_mb: parseFloat((used_kb / 1024).toFixed(2)),
     quota_mb: quota_mb ? parseInt(quota_mb, 10) : null,
     quota_kb: quota_kb ? parseInt(quota_kb, 10) : null,
-    meta_data: metaDataForDb(metaObj)
+    meta_data: metaStr,
+    meminfo_json: meminfoJson
   };
   const entryForClient = {
     ...entry,
